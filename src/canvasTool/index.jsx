@@ -9,7 +9,7 @@ const CanvasTool = ({ width = 900, height = 700 }) => {
 
   return (
     <div style={{ fontFamily: 'Arial, sans-serif' }}>
-      <h1>PDF Canvas Drawing Tool</h1>
+    
       
       <PDFUploader />
       <Toolbar />
