@@ -142,5 +142,36 @@ export function renderObject(ctx, object) {
       ctx.fillText(line, x + padding, textY);
       break;
     }
+    case "polyline": {
+      const { points, closed } = object.data || {};
+      if (!points || points.length < 2) break;
+      const { stroke, lineWidth } = object.style || {};
+      ctx.save();
+      if (stroke) ctx.strokeStyle = stroke;
+      if (lineWidth) ctx.lineWidth = lineWidth;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++)
+        ctx.lineTo(points[i].x, points[i].y);
+      if (closed) ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+      break;
+    }
+    case "snapshot": {
+      const d = object.data || {};
+      const { x = 0, y = 0, width, height, imageData } = d;
+      if (!imageData || !width || !height) break;
+      try {
+        ctx.putImageData(imageData, Math.floor(x), Math.floor(y));
+      } catch (e) {
+        const ix = Math.max(0, Math.floor(x));
+        const iy = Math.max(0, Math.floor(y));
+        ctx.putImageData(imageData, ix, iy);
+      }
+      break;
+    }
   }
 }
