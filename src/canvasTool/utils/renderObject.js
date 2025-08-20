@@ -173,5 +173,128 @@ export function renderObject(ctx, object) {
       }
       break;
     }
+    case "watermark": {
+      const d = object.data || {};
+      const s = object.style || {};
+      const text = d.text || "WATERMARK";
+      const fs = Math.max(12, Number(s.fontSize || 16));
+      const color = s.stroke || s.fill || "#000000";
+      const opacity = typeof d.opacity === "number" ? d.opacity : 0.18;
+
+      const W = ctx.canvas?.width || 0;
+      const H = ctx.canvas?.height || 0;
+
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+
+      if (d.tiled) {
+        const rot = ((d.rotationDeg || -30) * Math.PI) / 180;
+        const spacing = fs * (d.spacingFactor || 6);
+        ctx.translate(W / 2, H / 2);
+        ctx.rotate(rot);
+        const cols = Math.ceil((W * 1.5) / spacing) + 1;
+        const rows = Math.ceil((H * 1.5) / spacing) + 1;
+        const startX = -(cols >> 1) * spacing;
+        const startY = -(rows >> 1) * spacing;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            ctx.fillText(text, startX + c * spacing, startY + r * spacing);
+          }
+        }
+      } else {
+        ctx.fillText(text, Number(d.x || 0), Number(d.y || 0));
+      }
+
+      ctx.restore();
+      break;
+    }
+    case "text": {
+      const d = object.data || {};
+      const s = object.style || {};
+      let {
+        x = 0,
+        y = 0,
+        width = null,
+        height = null,
+        text = "",
+        align = "left",
+        opacity = 1.0,
+        rotationDeg = 0,
+        underline = false,
+      } = d;
+
+      const color = s.stroke || s.fill || "#000000";
+      const fontSize = Math.max(10, Number(s.fontSize || 16));
+      const fontFamily =
+        s.fontFamily ||
+        "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+      const italic = !!s.italic;
+      const bold = !!s.bold;
+
+      const parts = [];
+      if (italic) parts.push("italic");
+      if (bold) parts.push("bold");
+      parts.push(`${fontSize}px`, fontFamily);
+      const fontCSS = parts.join(" ");
+
+      ctx.save();
+      ctx.globalAlpha = typeof opacity === "number" ? opacity : 1;
+      ctx.fillStyle = color;
+      ctx.textBaseline = "top";
+      ctx.font = fontCSS;
+      ctx.translate(x, y);
+      if (rotationDeg) ctx.rotate((rotationDeg * Math.PI) / 180);
+
+      ctx.textAlign =
+        align === "center" ? "center" : align === "right" ? "right" : "left";
+      const anchorX = align === "center" ? 0.5 : align === "right" ? 1 : 0;
+
+      const lineHeight = Math.round(fontSize * 1.25);
+      const lines = [];
+      const rawLines = String(text).split(/\r?\n/);
+
+      if (width) {
+        for (const raw of rawLines) {
+          const words = raw.split(/(\s+)/);
+          let line = "";
+          for (const w of words) {
+            const test = line + w;
+            const m = ctx.measureText(test);
+            if (m.width <= width || line === "") line = test;
+            else {
+              lines.push(line);
+              line = w.trimStart();
+            }
+          }
+          lines.push(line);
+        }
+      } else {
+        lines.push(...rawLines);
+      }
+
+      let offY = 0;
+      for (const ln of lines) {
+        ctx.fillText(ln, 0, offY);
+        if (underline) {
+          const w = ctx.measureText(ln).width;
+          const uy = offY + fontSize + Math.max(1, Math.floor(fontSize * 0.07));
+          const sx = anchorX === 0.5 ? -w / 2 : anchorX === 1 ? -w : 0;
+          ctx.beginPath();
+          ctx.moveTo(sx, uy);
+          ctx.lineTo(sx + w, uy);
+          ctx.lineWidth = Math.max(1, Math.floor(fontSize * 0.07));
+          ctx.strokeStyle = color;
+          ctx.stroke();
+        }
+        offY += lineHeight;
+        if (height && offY + lineHeight > height) break;
+      }
+      ctx.restore();
+      break;
+    }
   }
 }

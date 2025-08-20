@@ -7,6 +7,8 @@ import { ArrowTool } from "./ArrowTool";
 import { CalloutTool } from "./CalloutTool";
 import { PolylineTool } from "./PolylineTool";
 import { SnapshotTool } from "./SnapshotTool";
+import { WatermarkTool } from "./WatermarkTool";
+import { TextTool } from "./TextTool";
 
 export const toolRegistry = {
   pencil: new PencilTool(),
@@ -18,6 +20,8 @@ export const toolRegistry = {
   callout: new CalloutTool(),
   polyline: new PolylineTool(),
   snapshot: new SnapshotTool(),
+  watermark: new WatermarkTool(),
+  text: new TextTool(),
 };
 
 export const toolList = [
@@ -30,4 +34,6 @@ export const toolList = [
   { name: "eraser", icon: "🧽", label: "Eraser" },
   { name: "polyline", icon: "〰️", label: "Polyline" },
   { name: "snapshot", icon: "📸", label: "Snapshot" },
+  { name: "watermark", icon: "🏷️", label: "Watermark" },
+  { name: "text", icon: "🅣", label: "Text" },
 ];
