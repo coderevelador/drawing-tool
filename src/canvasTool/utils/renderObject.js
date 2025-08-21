@@ -296,5 +296,130 @@ export function renderObject(ctx, object) {
       ctx.restore();
       break;
     }
+    case "highlighter": {
+      const d = object.data || {};
+      const s = object.style || {};
+      const pts = d.points || [];
+      if (!pts || pts.length < 2) break;
+
+      const stroke = s.stroke || "#ffeb3b";
+      const lineWidth = Math.max(2, Number(s.lineWidth || 12));
+      const opacity = typeof s.opacity === "number" ? s.opacity : 0.25;
+      const composite = s.composite || "multiply";
+
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.globalCompositeOperation = composite;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineWidth;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const p0 = pts[i];
+        const p1 = pts[i + 1];
+        const mx = (p0.x + p1.x) / 2;
+        const my = (p0.y + p1.y) / 2;
+        ctx.quadraticCurveTo(p0.x, p0.y, mx, my);
+      }
+      const last = pts[pts.length - 1];
+      ctx.lineTo(last.x, last.y);
+      ctx.stroke();
+      ctx.restore();
+      break;
+    }
+    case "sticky": {
+      const d = object.data || {};
+      const s = object.style || {};
+      const x = Math.floor(d.x || 0);
+      const y = Math.floor(d.y || 0);
+      const w = Math.floor(d.width || 160);
+      const h = Math.floor(d.height || 120);
+
+      const bg = s.fill || "#FFF9B1";
+      const color = s.color || "#111111";
+      const fontSize = Math.max(10, Number(s.fontSize || 16));
+      const fontFamily =
+        s.fontFamily ||
+        "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+      const opacity = typeof d.opacity === "number" ? d.opacity : 1;
+      const radius = Math.max(0, Number(d.radius ?? 10));
+      const pad = Math.max(4, Number(d.padding ?? 10));
+      const shadow = !!d.shadow;
+
+      // rounded rect helper
+      const rr = (ctx, x, y, w, h, r) => {
+        const rr2 = Math.min(r, Math.min(w, h) / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + rr2, y);
+        ctx.arcTo(x + w, y, x + w, y + h, rr2);
+        ctx.arcTo(x + w, y + h, x, y + h, rr2);
+        ctx.arcTo(x, y + h, x, y, rr2);
+        ctx.arcTo(x, y, x + w, y, rr2);
+        ctx.closePath();
+      };
+
+      ctx.save();
+      ctx.globalAlpha = opacity;
+
+      // shadow
+      if (shadow) {
+        ctx.shadowColor = "rgba(0,0,0,0.18)";
+        ctx.shadowBlur = 16;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 6;
+      }
+
+      // background
+      ctx.fillStyle = bg;
+      rr(ctx, x, y, w, h, radius);
+      ctx.fill();
+
+      // reset shadow for text
+      if (shadow) {
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+      }
+
+      // text
+      ctx.fillStyle = color;
+      ctx.font = `${fontSize}px ${fontFamily}`;
+      ctx.textBaseline = "top";
+      ctx.textAlign = "left";
+
+      const lineHeight = Math.round(fontSize * 1.25);
+      const maxW = Math.max(10, w - pad * 2);
+      const maxH = Math.max(10, h - pad * 2);
+      const lines = [];
+      const rawLines = String(d.text || "").split(/\r?\n/);
+
+      for (const raw of rawLines) {
+        const words = raw.split(/(\s+)/); // keep spaces
+        let line = "";
+        for (const w2 of words) {
+          const test = line + w2;
+          const m = ctx.measureText(test);
+          if (m.width <= maxW || line === "") {
+            line = test;
+          } else {
+            lines.push(line);
+            line = w2.trimStart();
+          }
+        }
+        lines.push(line);
+      }
+
+      let offY = 0;
+      for (const ln of lines) {
+        if (offY + lineHeight > maxH) break; // clip
+        ctx.fillText(ln, x + pad, y + pad + offY);
+        offY += lineHeight;
+      }
+
+      ctx.restore();
+      break;
+    }
   }
 }

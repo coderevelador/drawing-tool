@@ -9,6 +9,9 @@ import { PolylineTool } from "./PolylineTool";
 import { SnapshotTool } from "./SnapshotTool";
 import { WatermarkTool } from "./WatermarkTool";
 import { TextTool } from "./TextTool";
+import { HighlighterTool } from './HighlighterTool';
+import { StickyNoteTool } from './StickyNoteTool';
+
 
 export const toolRegistry = {
   pencil: new PencilTool(),
@@ -22,6 +25,8 @@ export const toolRegistry = {
   snapshot: new SnapshotTool(),
   watermark: new WatermarkTool(),
   text: new TextTool(),
+  highlighter: new HighlighterTool(),
+  stickynote: new StickyNoteTool(),
 };
 
 export const toolList = [
@@ -36,4 +41,6 @@ export const toolList = [
   { name: "snapshot", icon: "📸", label: "Snapshot" },
   { name: "watermark", icon: "🏷️", label: "Watermark" },
   { name: "text", icon: "🅣", label: "Text" },
+  { name: 'highlighter', icon: '🖍️', label: 'Highlighter' },
+  { name: 'stickynote', icon: '🗒️', label: 'Sticky' },
 ];
