@@ -3,6 +3,27 @@ import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
 
 export class LineTool extends BaseTool {
+  static inspector = [
+    { group: "Style", label: "Stroke", type: "color", path: "style.stroke" },
+    {
+      group: "Style",
+      label: "Width",
+      type: "number",
+      path: "style.lineWidth",
+      min: 1,
+      step: 1,
+    },
+    {
+      group: "FX",
+      label: "Opacity",
+      type: "range",
+      path: "style.opacity",
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
+  ];
+
   constructor() {
     super();
     this.name = "line";

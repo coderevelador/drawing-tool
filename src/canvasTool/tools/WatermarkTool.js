@@ -3,6 +3,36 @@ import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
 
 export class WatermarkTool extends BaseTool {
+  static inspector = [
+    { group: "Position", label: "X", type: "number", path: "data.x" },
+    { group: "Position", label: "Y", type: "number", path: "data.y" },
+    { group: "Text", label: "Content", type: "textarea", path: "data.text" },
+    {
+      group: "Style",
+      label: "Font size",
+      type: "number",
+      path: "style.fontSize",
+      min: 8,
+    },
+    { group: "Style", label: "Color", type: "color", path: "style.fill" },
+    {
+      group: "FX",
+      label: "Opacity",
+      type: "range",
+      path: "style.opacity",
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
+    {
+      group: "Options",
+      label: "Angle",
+      type: "number",
+      path: "data.angle",
+      step: 1,
+    },
+  ];
+
   constructor() {
     super();
     this.name = "watermark";
@@ -12,12 +42,12 @@ export class WatermarkTool extends BaseTool {
     this.currPos = null;
 
     // settings
-    this.opacity = 0.18;        // 0..1
-    this.rotationDeg = -30;     // tiled mode
-    this.spacingFactor = 6;     // tiled spacing = fontSize * factor
+    this.opacity = 0.18; // 0..1
+    this.rotationDeg = -30; // tiled mode
+    this.spacingFactor = 6; // tiled spacing = fontSize * factor
 
     // text handling
-    this.text = null;           // ask per placement
+    this.text = null; // ask per placement
     this.lastText = "WATERMARK";
   }
 
@@ -29,7 +59,11 @@ export class WatermarkTool extends BaseTool {
 
   _composePreview(engine) {
     if (!this.drawing || !this.currPos || !this.text) {
-      console.log("Preview skipped:", { drawing: this.drawing, currPos: this.currPos, text: this.text });
+      console.log("Preview skipped:", {
+        drawing: this.drawing,
+        currPos: this.currPos,
+        text: this.text,
+      });
       return;
     }
 
@@ -37,19 +71,20 @@ export class WatermarkTool extends BaseTool {
     engine.renderAllObjects();
 
     // pull style from zustand store (same path as others)
-    const storeRef = (engine?.store && typeof engine.store.getState === "function")
-      ? engine.store
-      : useCanvasStore;
+    const storeRef =
+      engine?.store && typeof engine.store.getState === "function"
+        ? engine.store
+        : useCanvasStore;
     const s = storeRef.getState();
     const color = s.color ?? "#000000";
     const fs = this._fontSizeFrom(s);
 
-    console.log("Preview watermark:", { 
-      text: this.text, 
-      pos: this.currPos, 
-      color, 
-      fontSize: fs, 
-      opacity: this.opacity 
+    console.log("Preview watermark:", {
+      text: this.text,
+      pos: this.currPos,
+      color,
+      fontSize: fs,
+      opacity: this.opacity,
     });
 
     const ctx = engine.ctx;
@@ -59,17 +94,18 @@ export class WatermarkTool extends BaseTool {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = `${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
-    
+
     // Debug: Draw a visible rectangle to see if we're drawing at all
     ctx.strokeStyle = color;
     ctx.strokeRect(this.currPos.x - 5, this.currPos.y - 5, 10, 10);
-    
+
     ctx.fillText(this.text, this.currPos.x, this.currPos.y);
     ctx.restore();
   }
 
   _commit(engine, targetPos, tiled) {
-    if (!this.text || !targetPos) { // nothing to place
+    if (!this.text || !targetPos) {
+      // nothing to place
       console.log("Commit aborted:", { text: this.text, targetPos });
       this.drawing = false;
       this.currPos = null;
@@ -77,11 +113,14 @@ export class WatermarkTool extends BaseTool {
       return;
     }
 
-    const storeRef = (engine?.store && typeof engine.store.getState === "function")
-      ? engine.store
-      : useCanvasStore;
+    const storeRef =
+      engine?.store && typeof engine.store.getState === "function"
+        ? engine.store
+        : useCanvasStore;
     const s = storeRef.getState();
-    const maxLayer = s.objects.length ? Math.max(...s.objects.map(o => o.layer)) : 0;
+    const maxLayer = s.objects.length
+      ? Math.max(...s.objects.map((o) => o.layer))
+      : 0;
 
     const watermarkObject = new CanvasObject({
       type: "watermark",
@@ -92,13 +131,13 @@ export class WatermarkTool extends BaseTool {
         tiled: !!tiled,
         opacity: this.opacity,
         rotationDeg: this.rotationDeg,
-        spacingFactor: this.spacingFactor
+        spacingFactor: this.spacingFactor,
       },
       style: {
-        stroke: s.color ?? "#000000",        // use current color
-        fontSize: this._fontSizeFrom(s)      // derived from width slider
+        stroke: s.color ?? "#000000", // use current color
+        fontSize: this._fontSizeFrom(s), // derived from width slider
       },
-      layer: maxLayer + 1
+      layer: maxLayer + 1,
     });
 
     console.log("Adding watermark object:", watermarkObject);
@@ -116,7 +155,7 @@ export class WatermarkTool extends BaseTool {
   // ---------------- Events ----------------
   onMouseDown(event, pos, engine) {
     console.log("Watermark mousedown:", { pos, hasEngine: !!engine });
-    
+
     // Ask text if not set for this placement
     if (!this.text) {
       const v = window.prompt("Enter watermark text:", this.lastText);
@@ -132,7 +171,7 @@ export class WatermarkTool extends BaseTool {
     }
 
     this.drawing = true;
-    this.currPos = pos;            // remember cursor even if onMouseUp has no pos
+    this.currPos = pos; // remember cursor even if onMouseUp has no pos
     this._composePreview(engine);
   }
 
@@ -144,8 +183,12 @@ export class WatermarkTool extends BaseTool {
 
   onMouseUp(event, pos, engine) {
     if (!this.drawing) return;
-    console.log("Watermark mouseup:", { pos, currPos: this.currPos, shiftKey: event?.shiftKey });
-    
+    console.log("Watermark mouseup:", {
+      pos,
+      currPos: this.currPos,
+      shiftKey: event?.shiftKey,
+    });
+
     // FIXED: Always use currPos (from mousedown/mousemove) instead of mouseup pos
     // The mouseup pos seems to have coordinate transformation issues
     const target = this.currPos; // Use the position we tracked during preview
@@ -157,7 +200,9 @@ export class WatermarkTool extends BaseTool {
     if (!event) return;
     // Optional quick changes:
     if (event.key.toLowerCase() === "o") {
-      const v = parseFloat(window.prompt("Opacity (0..1):", String(this.opacity)));
+      const v = parseFloat(
+        window.prompt("Opacity (0..1):", String(this.opacity))
+      );
       if (!Number.isNaN(v) && v >= 0 && v <= 1) {
         this.opacity = v;
         console.log("Changed opacity to:", this.opacity);
@@ -165,7 +210,9 @@ export class WatermarkTool extends BaseTool {
       if (this.drawing) this._composePreview(engine);
     }
     if (event.key.toLowerCase() === "r") {
-      const v = parseFloat(window.prompt("Rotation (deg) for tiled:", String(this.rotationDeg)));
+      const v = parseFloat(
+        window.prompt("Rotation (deg) for tiled:", String(this.rotationDeg))
+      );
       if (!Number.isNaN(v)) {
         this.rotationDeg = v;
         console.log("Changed rotation to:", this.rotationDeg);

@@ -3,6 +3,35 @@ import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
 
 export class ArrowTool extends BaseTool {
+  static inspector = [
+    { group: "Style", label: "Stroke", type: "color", path: "style.stroke" },
+    {
+      group: "Style",
+      label: "Width",
+      type: "number",
+      path: "style.lineWidth",
+      min: 1,
+      step: 1,
+    },
+    {
+      group: "Options",
+      label: "Head size",
+      type: "number",
+      path: "data.headSize",
+      min: 4,
+      step: 1,
+    },
+    {
+      group: "FX",
+      label: "Opacity",
+      type: "range",
+      path: "style.opacity",
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
+  ];
+
   constructor() {
     super();
     this.name = "arrow";
@@ -11,7 +40,6 @@ export class ArrowTool extends BaseTool {
   }
 
   onMouseDown(event, pos, engine) {
-
     const { color, lineWidth } = this.getToolOptions(engine.store);
 
     this.startPos = pos;
@@ -33,7 +61,7 @@ export class ArrowTool extends BaseTool {
     if (!this.snapshot || !this.startPos) return;
 
     const store = useCanvasStore.getState();
-   
+
     store.addObject(
       new CanvasObject({
         type: "arrow",

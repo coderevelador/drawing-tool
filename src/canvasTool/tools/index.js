@@ -9,9 +9,9 @@ import { PolylineTool } from "./PolylineTool";
 import { SnapshotTool } from "./SnapshotTool";
 import { WatermarkTool } from "./WatermarkTool";
 import { TextTool } from "./TextTool";
-import { HighlighterTool } from './HighlighterTool';
-import { StickyNoteTool } from './StickyNoteTool';
-
+import { HighlighterTool } from "./HighlighterTool";
+import { StickyNoteTool } from "./StickyNoteTool";
+import { SchemaRegistry } from "../utils/schemaRegistry";
 
 export const toolRegistry = {
   pencil: new PencilTool(),
@@ -29,6 +29,8 @@ export const toolRegistry = {
   stickynote: new StickyNoteTool(),
 };
 
+SchemaRegistry.registerFromTools(toolRegistry);
+
 export const toolList = [
   { name: "pencil", icon: "✏️", label: "Pencil" },
   { name: "line", icon: "📏", label: "Line" },
@@ -41,6 +43,6 @@ export const toolList = [
   { name: "snapshot", icon: "📸", label: "Snapshot" },
   { name: "watermark", icon: "🏷️", label: "Watermark" },
   { name: "text", icon: "🅣", label: "Text" },
-  { name: 'highlighter', icon: '🖍️', label: 'Highlighter' },
-  { name: 'stickynote', icon: '🗒️', label: 'Sticky' },
+  { name: "highlighter", icon: "🖍️", label: "Highlighter" },
+  { name: "stickynote", icon: "🗒️", label: "Sticky" },
 ];

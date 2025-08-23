@@ -3,6 +3,34 @@ import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
 
 export class RectTool extends BaseTool {
+  static inspector = [
+    { group: "Position", label: "X", type: "number", path: "data.x" },
+    { group: "Position", label: "Y", type: "number", path: "data.y" },
+    { group: "Size", label: "W", type: "number", path: "data.width", min: 1 },
+    { group: "Size", label: "H", type: "number", path: "data.height", min: 1 },
+
+    { group: "Style", label: "Stroke", type: "color", path: "style.stroke" },
+    { group: "Style", label: "Fill", type: "color", path: "style.fill" },
+    {
+      group: "Style",
+      label: "Width",
+      type: "number",
+      path: "style.lineWidth",
+      min: 1,
+      step: 1,
+    },
+
+    {
+      group: "FX",
+      label: "Opacity",
+      type: "range",
+      path: "style.opacity",
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
+  ];
+
   constructor() {
     super();
     this.name = "rect";
@@ -33,7 +61,7 @@ export class RectTool extends BaseTool {
     const width = pos.x - this.startPos.x;
     const height = pos.y - this.startPos.y;
 
-    const store = useCanvasStore.getState(); 
+    const store = useCanvasStore.getState();
 
     store.addObject(
       new CanvasObject({

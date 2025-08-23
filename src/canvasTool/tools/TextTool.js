@@ -4,6 +4,53 @@ import { useCanvasStore } from "../state/canvasStore";
 import { ensureTextToolbar } from "../ui/TextToolbar"; // new helper below
 
 export class TextTool extends BaseTool {
+  static inspector = [
+    { group: "Position", label: "X", type: "number", path: "data.x" },
+    { group: "Position", label: "Y", type: "number", path: "data.y" },
+    { group: "Size", label: "W", type: "number", path: "data.width" },
+    { group: "Size", label: "H", type: "number", path: "data.height" },
+
+    { group: "Text", label: "Content", type: "textarea", path: "data.text" },
+    {
+      group: "Text",
+      label: "Font size",
+      type: "number",
+      path: "style.fontSize",
+      min: 8,
+      step: 1,
+    },
+    {
+      group: "Text",
+      label: "Font",
+      type: "select",
+      path: "style.fontFamily",
+      options: [
+        "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+        "Georgia, serif",
+        "'Courier New', monospace",
+      ],
+    },
+
+    { group: "Style", label: "Fill", type: "color", path: "style.fill" },
+    {
+      group: "Style",
+      label: "Stroke",
+      type: "color",
+      path: "style.stroke",
+      showIf: (o) => dget(o, "style.stroke") !== undefined,
+    },
+
+    {
+      group: "FX",
+      label: "Opacity",
+      type: "range",
+      path: "style.opacity",
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
+  ];
+
   constructor() {
     super();
     this.name = "text";
