@@ -125,12 +125,23 @@ export function ensureToolDefaultsDock(engine) {
     ui.stroke.value = style.stroke ?? "#000000";
     ui.lineWidth = mkNum(1, 64, 1);
     ui.lineWidth.value = style.lineWidth ?? 2;
-    ui.lineType = mkSelect([
-      { value: "solid", label: "Solid" },
-      { value: "dashed", label: "Dashed" },
-      { value: "dotted", label: "Dotted" },
-      { value: "cloud", label: "Revision Cloud" },
-    ]);
+    const toolLineTypeOptions = (() => {
+      if (tool === "polyline" || tool === "rect" || tool === "rectangle") {
+        return [
+          { value: "solid", label: "Solid" },
+          { value: "dashed", label: "Dashed" },
+          { value: "dotted", label: "Dotted" },
+          { value: "cloud", label: "Revision Cloud" },
+        ];
+      }
+      // pencil and all others: no cloud
+      return [
+        { value: "solid", label: "Solid" },
+        { value: "dashed", label: "Dashed" },
+        { value: "dotted", label: "Dotted" },
+      ];
+    })();
+    ui.lineType = mkSelect(toolLineTypeOptions);
     ui.lineType.value = style.lineType ?? "solid";
 
     controls.appendChild(row("Stroke", ui.stroke));
