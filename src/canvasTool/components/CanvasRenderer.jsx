@@ -2,10 +2,12 @@ import React, { useRef, useEffect } from "react";
 import { CanvasEngine } from "../canvas/canvasEngine";
 import { useCanvasStore } from "../state/canvasStore";
 import { mountInspectorDock } from "../ui/InspectorDock";
+import { ensureToolDefaultsDock } from "../ui/ToolDefaultsDock";
 
 const CanvasRenderer = ({ width, height }) => {
   const canvasRef = useRef(null);
   const dockRef = useRef(null);
+  const defaultsRef = useRef(null);
   const { setCanvasEngine, currentTool } = useCanvasStore();
 
   useEffect(() => {
@@ -15,11 +17,12 @@ const CanvasRenderer = ({ width, height }) => {
     const engine = new CanvasEngine(canvas, useCanvasStore);
     setCanvasEngine(engine);
 
-    const dock = mountInspectorDock(engine);
-    dockRef.current = dock;
-    document.body.appendChild(dock);
+    dockRef.current = mountInspectorDock(engine);
+    defaultsRef.current = ensureToolDefaultsDock(engine);
+
     return () => {
-      // Cleanup if needed
+      defaultsRef.current?.destroy?.();
+      dockRef.current?.destroy?.();
     };
   }, [setCanvasEngine]);
 

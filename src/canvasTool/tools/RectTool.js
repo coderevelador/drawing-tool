@@ -58,27 +58,22 @@ export class RectTool extends BaseTool {
   }
 
   onMouseUp(event, pos, engine) {
-    const width = pos.x - this.startPos.x;
-    const height = pos.y - this.startPos.y;
-
     const store = useCanvasStore.getState();
+    if (!this.startPos) return;
 
-    store.addObject(
-      new CanvasObject({
-        type: "rectangle",
-        data: {
-          x: this.startPos.x,
-          y: this.startPos.y,
-          width,
-          height,
-        },
-        style: {
-          stroke: store.color,
-          fill: "none",
-        },
-        layer: 0,
-      })
+    const rectX = Math.min(this.startPos.x, pos.x);
+    const rectY = Math.min(this.startPos.y, pos.y);
+    const width = Math.abs(this.startPos.x - pos.x);
+    const height = Math.abs(this.startPos.y - pos.y);
+
+    const obj = this.makeStyledObject(
+      "rect",
+      { x: rectX, y: rectY, width, height },
+      engine
     );
+
+    store.addObject(new CanvasObject(obj));
+    engine.renderAllObjects?.();
 
     this.startPos = null;
     this.snapshot = null;

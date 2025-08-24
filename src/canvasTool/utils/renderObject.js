@@ -1,35 +1,149 @@
+// src/canvasTool/utils/renderObject.js
+// Unified renderer with your legacy object types + enhancements:
+//
+// - line types: solid / dashed / dotted / cloud (revision cloud for rect & closed polyline)
+// - stroke width + opacity, fill + fill opacity
+// - supports: rectangle|rect, circle (r or bbox), line, arrow, pencil (points|path),
+//             polyline (open/closed), callout, snapshot, watermark, text, highlighter, sticky
+
+// ---------- helpers ----------
+
+function applyCommon(ctx, style = {}) {
+  // SAVE first (your old version returned restore without save)
+  ctx.save();
+
+  if (typeof style.opacity === "number") ctx.globalAlpha = style.opacity;
+  ctx.lineWidth = style.lineWidth ?? 1;
+  ctx.strokeStyle = style.stroke ?? "#000";
+  ctx.fillStyle = style.fill ?? "transparent";
+
+  // Line type
+  const lt = style.lineType || "solid";
+  if (lt === "dashed") ctx.setLineDash([8, 6]);
+  else if (lt === "dotted") ctx.setLineDash([2, 6]);
+  else ctx.setLineDash([]);
+
+  return () => ctx.restore();
+}
+
+function fillIfNeeded(ctx, style) {
+  if (!style) return;
+  const fillEnabled = style.fillEnabled ?? (style.fill && style.fill !== "none");
+  if (!fillEnabled) return;
+  const prevAlpha = ctx.globalAlpha;
+  const fop = typeof style.fillOpacity === "number" ? style.fillOpacity : 1;
+  ctx.globalAlpha = prevAlpha * fop;
+  try {
+    ctx.fill();
+  } finally {
+    ctx.globalAlpha = prevAlpha;
+  }
+}
+
+function strokeCloudAroundPath(ctx, points, amplitude = 8, step = 12) {
+  // points: [{x,y}, ...] closed path expected
+  if (!points || points.length < 2) return;
+  const last = points[points.length - 1];
+  const closed = points[0].x === last.x && points[0].y === last.y;
+  const pts = closed ? points : points.concat([points[0]]);
+
+  ctx.beginPath();
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const segLen = Math.hypot(dx, dy) || 1;
+    const ux = dx / segLen, uy = dy / segLen;
+    // outward normal (clockwise assumed)
+    const nx = -uy, ny = ux;
+
+    let t = 0;
+    while (t < segLen) {
+      const cx = a.x + ux * t + nx * amplitude;
+      const cy = a.y + uy * t + ny * amplitude;
+      const r = amplitude;
+      if (i === 0 && t === 0) ctx.moveTo(a.x, a.y);
+      ctx.moveTo(a.x + ux * t, a.y + uy * t);
+      ctx.arc(
+        cx, cy, r,
+        Math.atan2(uy, ux) + Math.PI * 0.5,
+        Math.atan2(uy, ux) - Math.PI * 0.5,
+        true
+      );
+      t += step;
+    }
+  }
+  ctx.stroke();
+}
+
+// ---------- main ----------
+
 export function renderObject(ctx, object) {
-  ctx.strokeStyle = object.style.stroke || "#000";
-  ctx.fillStyle = object.style.fill || "none";
-  ctx.lineWidth = object.style.lineWidth || 1;
+  if (!object) return;
+
+  const style = object.style || {};
+  const cleanup = applyCommon(ctx, style);
 
   switch (object.type) {
+    // --- Rectangles ---
+    case "rect":
     case "rectangle": {
-      const { x, y, width, height } = object.data;
-      ctx.strokeRect(x, y, width, height);
-      break;
-    }
+      const d = object.data || {};
+      const { x = 0, y = 0, width = 0, height = 0 } = d;
 
-    case "circle": {
-      const { x, y, r } = object.data;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, 2 * Math.PI);
-      if (object.style.fill && object.style.fill !== "none") {
-        ctx.fill();
+      if ((style.lineType || "solid") === "cloud") {
+        const pts = [
+          { x, y },
+          { x: x + width, y },
+          { x: x + width, y: y + height },
+          { x, y: y + height },
+          { x, y }
+        ];
+        strokeCloudAroundPath(ctx, pts, style.cloudAmplitude ?? 8, style.cloudStep ?? 12);
+      } else {
+        ctx.beginPath();
+        ctx.rect(x, y, width, height);
+        fillIfNeeded(ctx, style);
+        ctx.stroke();
       }
-      ctx.stroke();
       break;
     }
 
-    case "arrow": {
-      const { x1, y1, x2, y2 } = object.data;
+    // --- Circle / Ellipse ---
+    case "circle": {
+      // Support both circle (x,y,r) and bbox (x,y,width,height)
+      const d = object.data || {};
+      if (typeof d.r === "number") {
+        const { x = 0, y = 0, r = 0 } = d;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        fillIfNeeded(ctx, style);
+        ctx.stroke();
+      } else {
+        const x = d.x ?? 0, y = d.y ?? 0;
+        const w = Math.abs(d.width ?? 0), h = Math.abs(d.height ?? 0);
+        const rx = w / 2, ry = h / 2;
+        const cx = x + rx, cy = y + ry;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        fillIfNeeded(ctx, style);
+        ctx.stroke();
+      }
+      break;
+    }
 
+    // --- Arrow ---
+    case "arrow": {
+      const d = object.data || {};
+      const x1 = d.x1 ?? 0, y1 = d.y1 ?? 0, x2 = d.x2 ?? 0, y2 = d.y2 ?? 0;
+
+      // Shaft
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
 
-      const headLen = 10;
+      // Head
+      const headLen = typeof style.headSize === "number" ? style.headSize : 10;
       const angle = Math.atan2(y2 - y1, x2 - x1);
 
       ctx.beginPath();
@@ -44,89 +158,84 @@ export function renderObject(ctx, object) {
       );
       ctx.closePath();
 
-      if (object.style.fill && object.style.fill !== "none") {
-        ctx.fill();
-      }
+      fillIfNeeded(ctx, style);
       ctx.stroke();
       break;
     }
+
+    // --- Line ---
     case "line": {
-      const { x1, y1, x2, y2 } = object.data;
+      const d = object.data || {};
+      const x1 = d.x1 ?? d.x ?? 0;
+      const y1 = d.y1 ?? d.y ?? 0;
+      const x2 = d.x2 ?? ((d.x ?? 0) + (d.width ?? 0));
+      const y2 = d.y2 ?? ((d.y ?? 0) + (d.height ?? 0));
+
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
       break;
     }
+
+    // --- Pencil / Freehand ---
     case "pencil": {
-      const pts = object.data.path;
-      if (!pts || pts.length === 0) break;
+      const d = object.data || {};
+      const pts = d.points || d.path || [];
+      if (!pts || pts.length < 2) break;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo(pts[i].x, pts[i].y);
-      }
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
       break;
     }
-    case "callout": {
-      const { x, y, width, height, text } = object.data;
 
-      // Draw speech bubble background
-      const cornerRadius = 15;
-      const tailWidth = 20;
-      const tailHeight = 15;
+    // --- Callout bubble with text ---
+    case "callout": {
+      const d = object.data || {};
+      const { x = 0, y = 0, width = 120, height = 80, text = "" } = d;
+
+      const cornerRadius = Math.max(0, Number(style.cornerRadius ?? 15));
+      const tailWidth = Math.max(0, Number(style.tailWidth ?? 20));
+      const tailHeight = Math.max(0, Number(style.tailHeight ?? 15));
 
       ctx.beginPath();
 
-      // Start from top-left corner
+      // Rounded rect path with tail on bottom
       ctx.moveTo(x + cornerRadius, y);
-
-      // Top edge
       ctx.lineTo(x + width - cornerRadius, y);
       ctx.arcTo(x + width, y, x + width, y + cornerRadius, cornerRadius);
 
-      // Right edge
       ctx.lineTo(x + width, y + height - cornerRadius);
-      ctx.arcTo(
-        x + width,
-        y + height,
-        x + width - cornerRadius,
-        y + height,
-        cornerRadius
-      );
+      ctx.arcTo(x + width, y + height, x + width - cornerRadius, y + height, cornerRadius);
 
-      // Bottom edge with tail
       const tailStartX = x + width * 0.7;
       ctx.lineTo(tailStartX + tailWidth, y + height);
-      ctx.lineTo(tailStartX + tailWidth / 2, y + height + tailHeight); // tail point
+      ctx.lineTo(tailStartX + tailWidth / 2, y + height + tailHeight);
       ctx.lineTo(tailStartX, y + height);
 
-      // Continue bottom edge
       ctx.lineTo(x + cornerRadius, y + height);
       ctx.arcTo(x, y + height, x, y + height - cornerRadius, cornerRadius);
 
-      // Left edge
       ctx.lineTo(x, y + cornerRadius);
       ctx.arcTo(x, y, x + cornerRadius, y, cornerRadius);
-
       ctx.closePath();
 
-      // Fill and stroke the bubble
-      ctx.fill();
+      // Fill & stroke bubble
+      fillIfNeeded(ctx, style);
       ctx.stroke();
 
-      // Draw text inside the bubble
-      const fontSize = object.style.fontSize || 16;
-      const fontFamily = object.style.fontFamily || "sans-serif";
+      // Draw text
+      const fontSize = Math.max(8, Number(style.fontSize || 16));
+      const fontFamily = style.fontFamily || "sans-serif";
       ctx.font = `${fontSize}px ${fontFamily}`;
-      ctx.fillStyle = object.style.stroke;
+      ctx.fillStyle = style.textColor || style.stroke || "#000";
 
-      const padding = 10;
-      const words = text.split(" ");
+      const padding = Math.max(4, Number(style.padding ?? 10));
+      const words = String(text).split(" ");
       let line = "";
-      const lineHeight = fontSize * 1.2;
-      let textY = y + padding + fontSize;
+      const lineHeight = Math.round(fontSize * 1.2);
+      let textY = y + padding + 2;
 
       for (let n = 0; n < words.length; n++) {
         const testLine = line + words[n] + " ";
@@ -142,37 +251,59 @@ export function renderObject(ctx, object) {
       ctx.fillText(line, x + padding, textY);
       break;
     }
+
+    // --- Polyline (open/closed, supports cloud when closed) ---
     case "polyline": {
-      const { points, closed } = object.data || {};
+      const d = object.data || {};
+      const points = d.points || [];
       if (!points || points.length < 2) break;
-      const { stroke, lineWidth } = object.style || {};
-      ctx.save();
-      if (stroke) ctx.strokeStyle = stroke;
-      if (lineWidth) ctx.lineWidth = lineWidth;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++)
-        ctx.lineTo(points[i].x, points[i].y);
-      if (closed) ctx.closePath();
-      ctx.stroke();
-      ctx.restore();
+
+      const closed = !!d.closed;
+      const lt = style.lineType || "solid";
+
+      if (lt === "cloud" && closed) {
+        const pathPts =
+          points[0].x === points[points.length - 1].x &&
+          points[0].y === points[points.length - 1].y
+            ? points
+            : points.concat([points[0]]);
+        strokeCloudAroundPath(ctx, pathPts, style.cloudAmplitude ?? 8, style.cloudStep ?? 12);
+      } else {
+        ctx.save();
+        if (style.stroke) ctx.strokeStyle = style.stroke;
+        if (style.lineWidth) ctx.lineWidth = style.lineWidth;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        if (closed) {
+          ctx.closePath();
+          fillIfNeeded(ctx, style);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
       break;
     }
+
+    // --- Snapshot (putImageData) ---
     case "snapshot": {
       const d = object.data || {};
       const { x = 0, y = 0, width, height, imageData } = d;
       if (!imageData || !width || !height) break;
       try {
         ctx.putImageData(imageData, Math.floor(x), Math.floor(y));
-      } catch (e) {
+      } catch {
         const ix = Math.max(0, Math.floor(x));
         const iy = Math.max(0, Math.floor(y));
         ctx.putImageData(imageData, ix, iy);
       }
       break;
     }
+
+    // --- Watermark ---
     case "watermark": {
       const d = object.data || {};
       const s = object.style || {};
@@ -212,6 +343,8 @@ export function renderObject(ctx, object) {
       ctx.restore();
       break;
     }
+
+    // --- Text (wrapping, underline, rotation) ---
     case "text": {
       const d = object.data || {};
       const s = object.style || {};
@@ -230,8 +363,7 @@ export function renderObject(ctx, object) {
       const color = s.stroke || s.fill || "#000000";
       const fontSize = Math.max(10, Number(s.fontSize || 16));
       const fontFamily =
-        s.fontFamily ||
-        "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+        s.fontFamily || "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
       const italic = !!s.italic;
       const bold = !!s.bold;
 
@@ -296,10 +428,12 @@ export function renderObject(ctx, object) {
       ctx.restore();
       break;
     }
+
+    // --- Highlighter (smooth curve, multiply) ---
     case "highlighter": {
       const d = object.data || {};
       const s = object.style || {};
-      const pts = d.points || [];
+      const pts = d.points || d.path || [];
       if (!pts || pts.length < 2) break;
 
       const stroke = s.stroke || "#ffeb3b";
@@ -330,6 +464,8 @@ export function renderObject(ctx, object) {
       ctx.restore();
       break;
     }
+
+    // --- Sticky note ---
     case "sticky": {
       const d = object.data || {};
       const s = object.style || {};
@@ -342,8 +478,7 @@ export function renderObject(ctx, object) {
       const color = s.color || "#111111";
       const fontSize = Math.max(10, Number(s.fontSize || 16));
       const fontFamily =
-        s.fontFamily ||
-        "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+        s.fontFamily || "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
       const opacity = typeof d.opacity === "number" ? d.opacity : 1;
       const radius = Math.max(0, Number(d.radius ?? 10));
       const pad = Math.max(4, Number(d.padding ?? 10));
@@ -421,5 +556,27 @@ export function renderObject(ctx, object) {
       ctx.restore();
       break;
     }
+
+    default: {
+      // Fallback: draw a rect if bbox exists
+      const d = object.data || {};
+      if (
+        typeof d.x === "number" && typeof d.y === "number" &&
+        typeof d.width === "number" && typeof d.height === "number"
+      ) {
+        ctx.beginPath();
+        ctx.rect(d.x, d.y, d.width, d.height);
+        fillIfNeeded(ctx, style);
+        ctx.stroke();
+      }
+    }
   }
+
+  cleanup();
 }
+
+export function renderObjects(ctx, objects = []) {
+  for (const obj of objects) renderObject(ctx, obj);
+}
+
+export default renderObject;

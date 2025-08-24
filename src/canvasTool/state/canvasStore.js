@@ -11,6 +11,59 @@ export const useCanvasStore = create((set, get) => ({
   color: "#000000",
   lineWidth: 2,
 
+  toolDefaults: {
+    rect: {
+      style: {
+        stroke: "#000000",
+        lineType: "solid",
+        lineWidth: 2,
+        opacity: 1,
+        fill: "#ffffff",
+        fillEnabled: false,
+        fillOpacity: 1,
+      },
+    },
+    circle: {
+      style: {
+        stroke: "#000000",
+        lineType: "solid",
+        lineWidth: 2,
+        opacity: 1,
+        fill: "#ffffff",
+        fillEnabled: false,
+        fillOpacity: 1,
+      },
+    },
+    line: {
+      style: { stroke: "#000000", lineType: "solid", lineWidth: 2, opacity: 1 },
+    },
+    polyline: {
+      style: { stroke: "#000000", lineType: "solid", lineWidth: 2, opacity: 1 },
+      closed: false,
+    },
+    pencil: {
+      style: { stroke: "#000000", lineType: "solid", lineWidth: 2, opacity: 1 },
+    },
+    arrow: {
+      style: { stroke: "#000000", lineType: "solid", lineWidth: 2, opacity: 1 },
+    },
+    highlighter: {
+      style: {
+        stroke: "#ffff00",
+        lineType: "solid",
+        lineWidth: 8,
+        opacity: 0.4,
+      },
+    },
+  },
+
+  setToolDefaults: (tool, patch) =>
+    set((state) => {
+      const cur = state.toolDefaults?.[tool] ?? {};
+      const next = deepMerge(cur, patch);
+      return { toolDefaults: { ...state.toolDefaults, [tool]: next } };
+    }),
+
   // Canvas state
   canvasEngine: null,
   isDrawing: false,
@@ -96,3 +149,17 @@ export const useCanvasStore = create((set, get) => ({
 
   clearObjects: () => set({ objects: [] }),
 }));
+
+function deepMerge(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) return b;
+  if (typeof a !== "object" || a === null) return b;
+  const out = { ...a };
+  for (const k of Object.keys(b || {})) {
+    const v = b[k];
+    out[k] =
+      typeof v === "object" && v !== null && typeof a[k] === "object"
+        ? deepMerge(a[k], v)
+        : v;
+  }
+  return out;
+}

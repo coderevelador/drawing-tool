@@ -1,5 +1,5 @@
 // src/canvasTool/ui/InspectorDock.js
-// Movable side panel + click-to-select + drag-to-move.
+// Movable side panel + click-to-select + drag-to-move + clone.
 // Supports rect, circle, line (x1,y1,x2,y2), polyline, highlighter, pencil (points[]).
 
 import { useCanvasStore } from "../state/canvasStore";
@@ -9,15 +9,70 @@ export function mountInspectorDock(engine, opts = {}) {
   const startPinnedRight = opts.startPinnedRight ?? true;
 
   // -------- store helpers ----------
-  const getObjects = () => (useCanvasStore.getState().objects || []);
+  const getObjects = () => useCanvasStore.getState().objects || [];
   const setObjects = (next) => {
     const s = useCanvasStore.getState();
     if (typeof s.setState === "function") s.setState({ objects: next });
-    else if (typeof useCanvasStore.setState === "function") useCanvasStore.setState({ objects: next });
+    else if (typeof useCanvasStore.setState === "function")
+      useCanvasStore.setState({ objects: next });
   };
 
   // ---------- selection ----------
   let selectedIdx = -1;
+
+  // ---------- helpers: cloning ----------
+  const nextCopyName = (name, fallbackType) => {
+    const base = (name && name.trim()) || fallbackType || "object";
+    const m = base.match(/^(.*?)(?:\s\((?:copy)(?:\s(\d+))?\))?$/i);
+    if (!m) return `${base} (copy)`;
+    const stem = (m[1] || base).trim();
+    const n = m[2] ? parseInt(m[2], 10) + 1 : 2;
+    // If there was already "(copy)" with/without number, increment; else add "(copy)"
+    return m[2] || /copy\)$/i.test(base)
+      ? `${stem} (copy ${n})`
+      : `${stem} (copy)`;
+  };
+
+  const cloneWithOffset = (src, dx = 12, dy = 12) => {
+    const c = JSON.parse(JSON.stringify(src));
+    // id: make unique if present
+    if (c.id != null) c.id = `${c.id}_copy_${Date.now()}`;
+    // name
+    c.name = nextCopyName(src.name, src.type);
+
+    if (c.data) {
+      const d = c.data;
+      if (typeof d.x === "number") d.x += dx;
+      if (typeof d.y === "number") d.y += dy;
+
+      if (typeof d.x1 === "number") d.x1 += dx;
+      if (typeof d.y1 === "number") d.y1 += dy;
+      if (typeof d.x2 === "number") d.x2 += dx;
+      if (typeof d.y2 === "number") d.y2 += dy;
+
+      if (Array.isArray(d.points)) {
+        d.points = d.points.map((p) => ({
+          x: (p.x || 0) + dx,
+          y: (p.y || 0) + dy,
+        }));
+      }
+    }
+    return c;
+  };
+
+  const cloneAtIndex = (idx) => {
+    const arr = getObjects().slice();
+    const orig = arr[idx];
+    if (!orig) return;
+    const dup = cloneWithOffset(orig);
+    // insert right after original
+    arr.splice(idx + 1, 0, dup);
+    setObjects(arr);
+    selectedIdx = idx + 1;
+    engine.renderAllObjects?.();
+    renderList();
+    renderInspector();
+  };
 
   // ---------- selection glow ----------
   function drawSelectionGlow(ctx, obj) {
@@ -39,34 +94,61 @@ export function mountInspectorDock(engine, opts = {}) {
       ctx.restore();
     };
 
-    const pathRect = () => { ctx.beginPath(); ctx.rect(+d.x || 0, +d.y || 0, +d.width || 0, +d.height || 0); };
-    const pathCircle = () => {
-      const x = +d.x || 0, y = +d.y || 0, w = +d.width || 0, h = +d.height || 0;
+    const pathRect = () => {
       ctx.beginPath();
-      ctx.ellipse(x + w / 2, y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2);
+      ctx.rect(+d.x || 0, +d.y || 0, +d.width || 0, +d.height || 0);
+    };
+    const pathCircle = () => {
+      const x = +d.x || 0,
+        y = +d.y || 0,
+        w = +d.width || 0,
+        h = +d.height || 0;
+      ctx.beginPath();
+      ctx.ellipse(
+        x + w / 2,
+        y + h / 2,
+        Math.abs(w / 2),
+        Math.abs(h / 2),
+        0,
+        0,
+        Math.PI * 2
+      );
     };
     const pathLine = () => {
-      const x1 = d.x1 ?? d.x ?? 0, y1 = d.y1 ?? d.y ?? 0;
-      const x2 = d.x2 ?? ((d.x ?? 0) + (d.width ?? 0));
-      const y2 = d.y2 ?? ((d.y ?? 0) + (d.height ?? 0));
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+      const x1 = d.x1 ?? d.x ?? 0,
+        y1 = d.y1 ?? d.y ?? 0;
+      const x2 = d.x2 ?? (d.x ?? 0) + (d.width ?? 0);
+      const y2 = d.y2 ?? (d.y ?? 0) + (d.height ?? 0);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
     };
     const pathPolyline = () => {
       const pts = d.points || [];
       if (pts.length < 2) return;
-      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       if (d.closed) ctx.closePath();
     };
 
     switch (obj.type) {
-      case "rect": glow(pathRect); break;
-      case "circle": glow(pathCircle); break;
-      case "line": glow(pathLine); break;
+      case "rect":
+        glow(pathRect);
+        break;
+      case "circle":
+        glow(pathCircle);
+        break;
+      case "line":
+        glow(pathLine);
+        break;
       case "polyline":
       case "highlighter":
-      case "pencil": glow(pathPolyline, Math.max(lw, 4)); break;
-      default: return;
+      case "pencil":
+        glow(pathPolyline, Math.max(lw, 4));
+        break;
+      default:
+        return;
     }
   }
 
@@ -87,14 +169,22 @@ export function mountInspectorDock(engine, opts = {}) {
 
   const iconFor = (type) => {
     switch (type) {
-      case "rect": return "▭";
-      case "circle": return "◯";
-      case "line": return "／";
-      case "text": return "𝒯";
-      case "polyline": return "〰";
-      case "highlighter": return "🖍";
-      case "pencil": return "✏️";
-      default: return "⬚";
+      case "rect":
+        return "▭";
+      case "circle":
+        return "◯";
+      case "line":
+        return "／";
+      case "text":
+        return "𝒯";
+      case "polyline":
+        return "〰";
+      case "highlighter":
+        return "🖍";
+      case "pencil":
+        return "✏️";
+      default:
+        return "⬚";
     }
   };
 
@@ -109,7 +199,10 @@ export function mountInspectorDock(engine, opts = {}) {
       case "pencil": {
         const pts = d.points || [];
         if (!pts.length) return { x: 0, y: 0, w: 0, h: 0 };
-        let minX = pts[0].x, minY = pts[0].y, maxX = pts[0].x, maxY = pts[0].y;
+        let minX = pts[0].x,
+          minY = pts[0].y,
+          maxX = pts[0].x,
+          maxY = pts[0].y;
         for (const p of pts) {
           if (p.x < minX) minX = p.x;
           if (p.y < minY) minY = p.y;
@@ -122,15 +215,18 @@ export function mountInspectorDock(engine, opts = {}) {
       case "line": {
         const x1 = d.x1 ?? d.x ?? 0;
         const y1 = d.y1 ?? d.y ?? 0;
-        const x2 = d.x2 ?? ((d.x ?? 0) + (d.width ?? 0));
-        const y2 = d.y2 ?? ((d.y ?? 0) + (d.height ?? 0));
-        const minX = Math.min(x1, x2), minY = Math.min(y1, y2);
-        const maxX = Math.max(x1, x2), maxY = Math.max(y1, y2);
+        const x2 = d.x2 ?? (d.x ?? 0) + (d.width ?? 0);
+        const y2 = d.y2 ?? (d.y ?? 0) + (d.height ?? 0);
+        const minX = Math.min(x1, x2),
+          minY = Math.min(y1, y2);
+        const maxX = Math.max(x1, x2),
+          maxY = Math.max(y1, y2);
         return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
       }
 
       default: {
-        const x = Number(d.x || 0), y = Number(d.y || 0);
+        const x = Number(d.x || 0),
+          y = Number(d.y || 0);
         const w = Number(d.width || d.w || 0) || 200;
         const h = Number(d.height || d.h || 0) || 60;
         return { x, y, w, h };
@@ -139,8 +235,10 @@ export function mountInspectorDock(engine, opts = {}) {
   };
 
   const distToSeg = (p, a, b) => {
-    const vx = b.x - a.x, vy = b.y - a.y;
-    const wx = p.x - a.x, wy = p.y - a.y;
+    const vx = b.x - a.x,
+      vy = b.y - a.y;
+    const wx = p.x - a.x,
+      wy = p.y - a.y;
     const c1 = vx * wx + vy * wy;
     if (c1 <= 0) return Math.hypot(p.x - a.x, p.y - a.y);
     const c2 = vx * vx + vy * vy;
@@ -158,7 +256,7 @@ export function mountInspectorDock(engine, opts = {}) {
       case "pencil": {
         const pts = d.points || [];
         if (pts.length < 2) return false;
-        const tol = (Math.max(obj.style?.lineWidth ?? 6, 6) + 4);
+        const tol = Math.max(obj.style?.lineWidth ?? 6, 6) + 4;
         for (let i = 0; i < pts.length - 1; i++) {
           if (distToSeg(pos, pts[i], pts[i + 1]) <= tol) return true;
         }
@@ -168,16 +266,21 @@ export function mountInspectorDock(engine, opts = {}) {
       case "line": {
         const a = { x: d.x1 ?? d.x ?? 0, y: d.y1 ?? d.y ?? 0 };
         const b = {
-          x: d.x2 ?? ((d.x ?? 0) + (d.width ?? 0)),
-          y: d.y2 ?? ((d.y ?? 0) + (d.height ?? 0)),
+          x: d.x2 ?? (d.x ?? 0) + (d.width ?? 0),
+          y: d.y2 ?? (d.y ?? 0) + (d.height ?? 0),
         };
-        const tol = (Math.max(obj.style?.lineWidth ?? 2, 2) + 4);
+        const tol = Math.max(obj.style?.lineWidth ?? 2, 2) + 4;
         return distToSeg(pos, a, b) <= tol;
       }
 
       default: {
         const b = getBounds(obj);
-        return (pos.x >= b.x && pos.x <= b.x + b.w && pos.y >= b.y && pos.y <= b.y + b.h);
+        return (
+          pos.x >= b.x &&
+          pos.x <= b.x + b.w &&
+          pos.y >= b.y &&
+          pos.y <= b.y + b.h
+        );
       }
     }
   };
@@ -210,7 +313,7 @@ export function mountInspectorDock(engine, opts = {}) {
     font: "12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     overflow: "hidden",
     zIndex: 3000,
-    userSelect: "none"
+    userSelect: "none",
   });
 
   const header = document.createElement("div");
@@ -221,7 +324,7 @@ export function mountInspectorDock(engine, opts = {}) {
     gap: "8px",
     padding: "10px",
     background: "#111827",
-    cursor: "grab"
+    cursor: "grab",
   });
   header.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px">
@@ -235,6 +338,10 @@ export function mountInspectorDock(engine, opts = {}) {
       </label>
     </div>`;
   panel.appendChild(header);
+
+  // attach to DOM (fixed, floats above everything)
+  const host = document.body; // or: engine.canvas?.parentElement || document.body
+  host.appendChild(panel);
 
   // dark input styles (scoped)
   const styleTag = document.createElement("style");
@@ -250,7 +357,9 @@ export function mountInspectorDock(engine, opts = {}) {
   panel.appendChild(styleTag);
 
   // drag panel itself
-  let draggingPanel = false, offX = 0, offY = 0;
+  let draggingPanel = false,
+    offX = 0,
+    offY = 0;
   header.addEventListener("pointerdown", (e) => {
     draggingPanel = true;
     header.setPointerCapture(e.pointerId);
@@ -284,7 +393,7 @@ export function mountInspectorDock(engine, opts = {}) {
     gridTemplateColumns: "1fr",
     gap: "8px",
     padding: "10px",
-    overflow: "auto"
+    overflow: "auto",
   });
   panel.appendChild(body);
 
@@ -292,59 +401,100 @@ export function mountInspectorDock(engine, opts = {}) {
   Object.assign(list.style, {
     background: "rgba(255,255,255,.03)",
     borderRadius: "10px",
-    padding: "8px"
+    padding: "8px",
   });
 
   const insp = document.createElement("div");
   Object.assign(insp.style, {
     background: "rgba(255,255,255,.03)",
     borderRadius: "10px",
-    padding: "8px"
+    padding: "8px",
   });
 
   body.appendChild(list);
   body.appendChild(insp);
 
-  // ---- render object rows (NO up/down controls) ----
+  // ---- render object rows (add CLONE button per row) ----
   const renderList = () => {
     const objs = getObjects();
     list.innerHTML = "";
 
     objs.forEach((o, idx) => {
-      const row = document.createElement("button");
+      const row = document.createElement("div");
       Object.assign(row.style, {
         width: "100%",
         display: "grid",
-        gridTemplateColumns: "20px 1fr",
+        gridTemplateColumns: "20px 1fr auto", // extra column for clone button
         gap: "8px",
         alignItems: "center",
         padding: "6px 8px",
         marginBottom: "4px",
         borderRadius: "8px",
-        border: "0",
-        cursor: "pointer",
         background: idx === selectedIdx ? "#1f2937" : "transparent",
         color: "inherit",
-        textAlign: "left"
       });
+
+      // selection click area
+      const selBtn = document.createElement("button");
+      Object.assign(selBtn.style, {
+        gridColumn: "1 / span 2",
+        display: "grid",
+        gridTemplateColumns: "20px 1fr",
+        alignItems: "center",
+        gap: "8px",
+        border: "0",
+        background: "transparent",
+        color: "inherit",
+        textAlign: "left",
+        cursor: "pointer",
+        padding: 0,
+      });
+      selBtn.onclick = () => {
+        selectedIdx = idx;
+        repaintWithSelection();
+        renderList();
+        renderInspector();
+      };
 
       const swatch = document.createElement("div");
       Object.assign(swatch.style, {
-        width: "14px", height: "14px", borderRadius: "3px",
-        background: o?.style?.stroke || o?.style?.fill || "#64748b"
+        width: "14px",
+        height: "14px",
+        borderRadius: "3px",
+        background: o?.style?.stroke || o?.style?.fill || "#64748b",
       });
 
       const label = document.createElement("div");
       const name = o.name || `${o.type}`;
       label.textContent = `${iconFor(o.type)}  ${name}`;
-      label.style.overflow = "hidden";
-      label.style.textOverflow = "ellipsis";
-      label.style.whiteSpace = "nowrap";
+      Object.assign(label.style, {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      });
 
-      row.onclick = () => { selectedIdx = idx; repaintWithSelection(); renderList(); renderInspector(); };
+      selBtn.appendChild(swatch);
+      selBtn.appendChild(label);
 
-      row.appendChild(swatch);
-      row.appendChild(label);
+      // clone button
+      const cloneBtn = document.createElement("button");
+      cloneBtn.textContent = "⧉";
+      cloneBtn.title = "Clone";
+      Object.assign(cloneBtn.style, {
+        border: "0",
+        borderRadius: "6px",
+        padding: "2px 8px",
+        background: "#0b1220",
+        color: "#e5e7eb",
+        cursor: "pointer",
+      });
+      cloneBtn.onclick = (e) => {
+        e.stopPropagation();
+        cloneAtIndex(idx);
+      };
+
+      row.appendChild(selBtn);
+      row.appendChild(cloneBtn);
       list.appendChild(row);
     });
   };
@@ -369,37 +519,138 @@ export function mountInspectorDock(engine, opts = {}) {
           { group: "Position", label: "x", type: "number", path: "data.x" },
           { group: "Position", label: "y", type: "number", path: "data.y" },
           { group: "Size", label: "width", type: "number", path: "data.width" },
-          { group: "Size", label: "height", type: "number", path: "data.height" },
+          {
+            group: "Size",
+            label: "height",
+            type: "number",
+            path: "data.height",
+          },
 
           // Line-like endpoints if present
-          { group: "Position", label: "x1", type: "number", path: "data.x1", showIf: o => o?.data?.x1 != null },
-          { group: "Position", label: "y1", type: "number", path: "data.y1", showIf: o => o?.data?.y1 != null },
-          { group: "Position", label: "x2", type: "number", path: "data.x2", showIf: o => o?.data?.x2 != null },
-          { group: "Position", label: "y2", type: "number", path: "data.y2", showIf: o => o?.data?.y2 != null },
+          {
+            group: "Position",
+            label: "x1",
+            type: "number",
+            path: "data.x1",
+            showIf: (o) => o?.data?.x1 != null,
+          },
+          {
+            group: "Position",
+            label: "y1",
+            type: "number",
+            path: "data.y1",
+            showIf: (o) => o?.data?.y1 != null,
+          },
+          {
+            group: "Position",
+            label: "x2",
+            type: "number",
+            path: "data.x2",
+            showIf: (o) => o?.data?.x2 != null,
+          },
+          {
+            group: "Position",
+            label: "y2",
+            type: "number",
+            path: "data.y2",
+            showIf: (o) => o?.data?.y2 != null,
+          },
 
           // Poly-like
           {
-            group: "Points", label: "Points (JSON)", type: "textarea", path: "data.points",
-            showIf: o => Array.isArray(o?.data?.points),
-            parse: v => { try { return JSON.parse(v); } catch { return []; } },
-            format: v => JSON.stringify(v ?? [], null, 0)
+            group: "Points",
+            label: "Points (JSON)",
+            type: "textarea",
+            path: "data.points",
+            showIf: (o) => Array.isArray(o?.data?.points),
+            parse: (v) => {
+              try {
+                return JSON.parse(v);
+              } catch {
+                return [];
+              }
+            },
+            format: (v) => JSON.stringify(v ?? [], null, 0),
           },
 
           // Style
-          { group: "Style", label: "Stroke", type: "color", path: "style.stroke", showIf: o => o?.style?.stroke != null },
-          { group: "Style", label: "Fill", type: "color", path: "style.fill", showIf: o => o?.style?.fill != null },
-          { group: "Style", label: "Width", type: "number", path: "style.lineWidth", min: 1, step: 1, showIf: o => o?.style?.lineWidth != null },
-          { group: "FX", label: "Opacity", type: "range", path: "style.opacity", min: 0, max: 1, step: 0.05, showIf: o => o?.style?.opacity != null },
+          {
+            group: "Style",
+            label: "Stroke",
+            type: "color",
+            path: "style.stroke",
+            showIf: (o) => o?.style?.stroke != null,
+          },
+          {
+            group: "Style",
+            label: "Fill",
+            type: "color",
+            path: "style.fill",
+            showIf: (o) => o?.style?.fill != null,
+          },
+          {
+            group: "Style",
+            label: "Width",
+            type: "number",
+            path: "style.lineWidth",
+            min: 1,
+            step: 1,
+            showIf: (o) => o?.style?.lineWidth != null,
+          },
+          {
+            group: "FX",
+            label: "Opacity",
+            type: "range",
+            path: "style.opacity",
+            min: 0,
+            max: 1,
+            step: 0.05,
+            showIf: (o) => o?.style?.opacity != null,
+          },
 
           // Arrow extras if present
-          { group: "Options", label: "Head size", type: "number", path: "style.headSize", min: 2, step: 1, showIf: o => o?.style?.headSize != null },
-          { group: "Options", label: "Head type", type: "select", path: "style.headType", options: ["triangle", "barb", "open"], showIf: o => o?.style?.headType != null },
+          {
+            group: "Options",
+            label: "Head size",
+            type: "number",
+            path: "style.headSize",
+            min: 2,
+            step: 1,
+            showIf: (o) => o?.style?.headSize != null,
+          },
+          {
+            group: "Options",
+            label: "Head type",
+            type: "select",
+            path: "style.headType",
+            options: ["triangle", "barb", "open"],
+            showIf: (o) => o?.style?.headType != null,
+          },
 
           // Text-like
-          { group: "Text", label: "Content", type: "textarea", path: "data.text", showIf: o => o?.data?.text != null },
-          { group: "Text", label: "Font", type: "text", path: "style.font", showIf: o => o?.style?.font != null },
-          { group: "Text", label: "Align", type: "select", path: "style.align", options: ["left", "center", "right"], showIf: o => o?.style?.align != null },
-        ]
+          {
+            group: "Text",
+            label: "Content",
+            type: "textarea",
+            path: "data.text",
+            showIf: (o) => o?.data?.text != null,
+          },
+          {
+            group: "Text",
+            label: "Font",
+            type: "text",
+            path: "style.font",
+            showIf: (o) => o?.style?.font != null,
+          },
+          {
+            group: "Text",
+            label: "Align",
+            type: "select",
+            path: "style.align",
+            options: ["left", "center", "right"],
+            showIf: (o) => o?.style?.align != null,
+          },
+        ],
       };
     }
 
@@ -417,7 +668,7 @@ export function mountInspectorDock(engine, opts = {}) {
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
         gap: "6px",
-        alignItems: "center"
+        alignItems: "center",
       });
       const l = document.createElement("label");
       l.textContent = label;
@@ -429,11 +680,17 @@ export function mountInspectorDock(engine, opts = {}) {
     for (const [groupName, fields] of groups.entries()) {
       const title = document.createElement("div");
       title.textContent = groupName;
-      Object.assign(title.style, { marginTop: "6px", fontWeight: "700", opacity: ".85" });
+      Object.assign(title.style, {
+        marginTop: "6px",
+        fontWeight: "700",
+        opacity: ".85",
+      });
       container.appendChild(title);
 
       for (const f of fields) {
-        const current = f.format ? f.format(dget(object, f.path)) : dget(object, f.path, "");
+        const current = f.format
+          ? f.format(dget(object, f.path))
+          : dget(object, f.path, "");
         let input;
 
         switch (f.type) {
@@ -447,7 +704,11 @@ export function mountInspectorDock(engine, opts = {}) {
             input.oninput = () => {
               const v = input.value;
               const num = v === "" ? "" : Number(v);
-              dset(object, f.path, v === "" ? "" : (Number.isFinite(num) ? num : current));
+              dset(
+                object,
+                f.path,
+                v === "" ? "" : Number.isFinite(num) ? num : current
+              );
               commit();
             };
             container.appendChild(mkRow(f.label, input));
@@ -457,7 +718,10 @@ export function mountInspectorDock(engine, opts = {}) {
             input = document.createElement("input");
             input.type = "text";
             input.value = current ?? "";
-            input.oninput = () => { dset(object, f.path, input.value); commit(); };
+            input.oninput = () => {
+              dset(object, f.path, input.value);
+              commit();
+            };
             container.appendChild(mkRow(f.label, input));
             break;
           }
@@ -481,7 +745,10 @@ export function mountInspectorDock(engine, opts = {}) {
             input.max = String(f.max ?? 1);
             input.step = String(f.step ?? 0.05);
             input.value = String(current ?? 1);
-            input.oninput = () => { dset(object, f.path, Number(input.value)); commit(); };
+            input.oninput = () => {
+              dset(object, f.path, Number(input.value));
+              commit();
+            };
             container.appendChild(mkRow(f.label, input));
             break;
           }
@@ -489,38 +756,77 @@ export function mountInspectorDock(engine, opts = {}) {
             input = document.createElement("input");
             input.type = "color";
             input.value = current || "#000000";
-            input.oninput = () => { dset(object, f.path, input.value); commit(); };
+            input.oninput = () => {
+              dset(object, f.path, input.value);
+              commit();
+            };
             break;
           }
           case "select": {
             input = document.createElement("select");
-            (f.options || []).forEach(opt => {
+            (f.options || []).forEach((opt) => {
               const o = document.createElement("option");
-              o.value = opt; o.textContent = opt;
+              o.value = opt;
+              o.textContent = opt;
               input.appendChild(o);
             });
             input.value = current || (f.options?.[0] ?? "");
-            input.onchange = () => { dset(object, f.path, input.value); commit(); };
+            input.onchange = () => {
+              dset(object, f.path, input.value);
+              commit();
+            };
             break;
           }
           case "checkbox": {
             input = document.createElement("input");
             input.type = "checkbox";
             input.checked = !!current;
-            input.onchange = () => { dset(object, f.path, !!input.checked); commit(); };
+            input.onchange = () => {
+              dset(object, f.path, !!input.checked);
+              commit();
+            };
             break;
           }
-          default: continue;
+          default:
+            continue;
         }
 
         container.appendChild(mkRow(f.label, input));
       }
     }
 
-    // delete selected
+    // actions: Clone + Delete
+    const actions = document.createElement("div");
+    Object.assign(actions.style, {
+      display: "flex",
+      gap: "8px",
+      marginTop: "8px",
+    });
+
+    const cloneSel = document.createElement("button");
+    cloneSel.textContent = "Clone selected";
+    Object.assign(cloneSel.style, {
+      background: "#2563eb",
+      color: "#fff",
+      border: "0",
+      borderRadius: "8px",
+      padding: "6px 10px",
+      cursor: "pointer",
+    });
+    cloneSel.onclick = () => {
+      if (selectedIdx >= 0) cloneAtIndex(selectedIdx);
+    };
+
     const del = document.createElement("button");
     del.textContent = "Delete selected";
-    Object.assign(del.style, { marginTop: "6px", background: "#ef4444", color: "#fff", border: "0", borderRadius: "8px", padding: "6px 10px", cursor: "pointer" });
+    Object.assign(del.style, {
+      background: "#ef4444",
+      color: "#fff",
+      border: "0",
+      borderRadius: "8px",
+      padding: "6px 10px",
+      cursor: "pointer",
+    });
     del.onclick = () => {
       const arr = getObjects().slice();
       if (selectedIdx >= 0 && selectedIdx < arr.length) {
@@ -528,16 +834,24 @@ export function mountInspectorDock(engine, opts = {}) {
         setObjects(arr);
         selectedIdx = -1;
         engine.renderAllObjects?.();
-        renderList(); renderInspector();
+        renderList();
+        renderInspector();
       }
     };
-    container.appendChild(del);
+
+    actions.appendChild(cloneSel);
+    actions.appendChild(del);
+    container.appendChild(actions);
   }
 
   const renderInspector = () => {
     const objs = getObjects();
     const obj = objs[selectedIdx];
-    const commit = () => { setObjects(objs.slice()); repaintWithSelection(); renderInspector(); };
+    const commit = () => {
+      setObjects(objs.slice());
+      repaintWithSelection();
+      renderInspector();
+    };
     renderInspectorFromSchema(insp, obj, commit);
   };
 
@@ -573,7 +887,10 @@ export function mountInspectorDock(engine, opts = {}) {
       return;
     }
     const obj = getObjects()[selectedIdx];
-    if (!obj) { canvas.style.cursor = "default"; return; }
+    if (!obj) {
+      canvas.style.cursor = "default";
+      return;
+    }
     canvas.style.cursor = isHit(obj, pos) ? "grab" : "default";
   }
 
@@ -603,7 +920,8 @@ export function mountInspectorDock(engine, opts = {}) {
     objStart = { ...obj.data };
     canvas.setPointerCapture?.(e.pointerId);
     canvas.style.cursor = "grabbing";
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   const onPointerMove = (e) => {
@@ -639,7 +957,8 @@ export function mountInspectorDock(engine, opts = {}) {
 
     setObjects(objs.slice());
     repaintWithSelection();
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   const endObjDrag = (e) => {
@@ -649,7 +968,8 @@ export function mountInspectorDock(engine, opts = {}) {
     objStart = null;
     canvas.style.cursor = "grab";
     canvas.releasePointerCapture?.(e.pointerId);
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   canvas.addEventListener("pointerdown", onPointerDown, true);
