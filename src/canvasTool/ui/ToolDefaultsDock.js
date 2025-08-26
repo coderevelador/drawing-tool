@@ -1,3 +1,4 @@
+// src/canvasTool/ui/ToolDefaultsDock.js
 import { useCanvasStore } from "../state/canvasStore";
 import { makeDraggable } from "./draggable";
 
@@ -56,12 +57,14 @@ export function ensureToolDefaultsDock(engine) {
     if (min != null) i.min = min;
     if (max != null) i.max = max;
     i.step = step;
-    i.style.height = "28px";
-    i.style.background = "#0e142b";
-    i.style.color = "#eee";
-    i.style.border = "1px solid rgba(255,255,255,.12)";
-    i.style.borderRadius = "6px";
-    i.style.padding = "0 6px";
+    Object.assign(i.style, {
+      height: "28px",
+      background: "#0e142b",
+      color: "#eee",
+      border: "1px solid rgba(255,255,255,.12)",
+      borderRadius: "6px",
+      padding: "0 6px",
+    });
     return i;
   };
   const mkRange = (min, max, step = 0.05) => {
@@ -75,12 +78,14 @@ export function ensureToolDefaultsDock(engine) {
   };
   const mkSelect = (opts) => {
     const s = document.createElement("select");
-    s.style.height = "28px";
-    s.style.background = "#0e142b";
-    s.style.color = "#eee";
-    s.style.border = "1px solid rgba(255,255,255,.12)";
-    s.style.borderRadius = "6px";
-    s.style.padding = "0 6px";
+    Object.assign(s.style, {
+      height: "28px",
+      background: "#0e142b",
+      color: "#eee",
+      border: "1px solid rgba(255,255,255,.12)",
+      borderRadius: "6px",
+      padding: "0 6px",
+    });
     opts.forEach((o) => {
       const op = document.createElement("option");
       op.value = o.value ?? o;
@@ -109,7 +114,6 @@ export function ensureToolDefaultsDock(engine) {
 
   let ui = {};
   const rebuild = () => {
-    // wipe and rebuild
     const old = el.querySelector("[data-role='controls']");
     if (old) old.remove();
     const controls = document.createElement("div");
@@ -120,35 +124,47 @@ export function ensureToolDefaultsDock(engine) {
     const style = defaults.style || {};
     title.textContent = `Tool Defaults — ${tool}`;
 
+    if (tool === "snapshot") {
+      el.style.display = "none";
+      return;
+    } else {
+      el.style.display = "";
+    }
+
     // Common stroke controls
     ui.stroke = mkColor();
     ui.stroke.value = style.stroke ?? "#000000";
+
     ui.lineWidth = mkNum(1, 64, 1);
     ui.lineWidth.value = style.lineWidth ?? 2;
-    const toolLineTypeOptions = (() => {
-      if (tool === "polyline" || tool === "rect" || tool === "rectangle") {
+
+    const allowLineType = tool !== "callout"; // hide for callout
+    if (allowLineType) {
+      const toolLineTypeOptions = (() => {
+        if (tool === "polyline" || tool === "rect" || tool === "rectangle") {
+          return [
+            { value: "solid", label: "Solid" },
+            { value: "dashed", label: "Dashed" },
+            { value: "dotted", label: "Dotted" },
+            { value: "cloud", label: "Revision Cloud" },
+          ];
+        }
         return [
           { value: "solid", label: "Solid" },
           { value: "dashed", label: "Dashed" },
           { value: "dotted", label: "Dotted" },
-          { value: "cloud", label: "Revision Cloud" },
         ];
-      }
-      // pencil and all others: no cloud
-      return [
-        { value: "solid", label: "Solid" },
-        { value: "dashed", label: "Dashed" },
-        { value: "dotted", label: "Dotted" },
-      ];
-    })();
-    ui.lineType = mkSelect(toolLineTypeOptions);
-    ui.lineType.value = style.lineType ?? "solid";
+      })();
+      ui.lineType = mkSelect(toolLineTypeOptions);
+      ui.lineType.value = style.lineType ?? "solid";
+    }
 
     controls.appendChild(row("Stroke", ui.stroke));
     controls.appendChild(row("Width", ui.lineWidth));
-    controls.appendChild(row("Line type", ui.lineType));
+    if (allowLineType && ui.lineType)
+      controls.appendChild(row("Line type", ui.lineType));
 
-    // Fill controls (Rect/Circle)
+    // Fill controls (Rect/Circle) — leave as-is; callout uses inspector for text/fill
     const fillable = ["rect", "rectangle", "circle", "ellipse"].includes(tool);
     if (fillable) {
       ui.fillEnabled = mkCheck();
@@ -167,8 +183,9 @@ export function ensureToolDefaultsDock(engine) {
     ui.opacity.value = style.opacity ?? 1;
     controls.appendChild(row("Stroke opacity", ui.opacity));
 
-    // Cloud params when chosen and supported
+    // Cloud params (only if lineType exists AND chosen to "cloud")
     const showCloud = () => {
+      if (!ui.lineType) return; // no line type selector (e.g., callout)
       const lt = ui.lineType.value;
       const supportsCloud = ["rect", "rectangle", "polyline"].includes(tool);
       let cloudWrap = controls.querySelector("[data-role='cloud']");
@@ -193,8 +210,10 @@ export function ensureToolDefaultsDock(engine) {
         delete ui.cloudStep;
       }
     };
-    ui.lineType.onchange = showCloud;
-    showCloud();
+    if (ui.lineType) {
+      ui.lineType.onchange = showCloud;
+      showCloud();
+    }
 
     // Polyline closed toggle
     if (tool === "polyline") {
@@ -208,10 +227,12 @@ export function ensureToolDefaultsDock(engine) {
         style: {
           stroke: ui.stroke.value,
           lineWidth: parseFloat(ui.lineWidth.value || "2"),
-          lineType: ui.lineType.value,
           opacity: parseFloat(ui.opacity.value || "1"),
         },
       };
+      if (ui.lineType) {
+        patch.style.lineType = ui.lineType.value;
+      }
       if (ui.fill) {
         patch.style.fill = ui.fill.value;
         patch.style.fillEnabled = !!ui.fillEnabled.checked;
@@ -224,6 +245,7 @@ export function ensureToolDefaultsDock(engine) {
       if (ui.closed) patch.closed = !!ui.closed.checked;
       write(patch);
     };
+
     Object.values(ui).forEach((elm) => {
       if (elm && elm.addEventListener) {
         elm.addEventListener("input", commit);
@@ -232,7 +254,7 @@ export function ensureToolDefaultsDock(engine) {
     });
   };
 
-  document.body.appendChild(el); // attach
+  document.body.appendChild(el);
   const stopDrag = makeDraggable(el, {
     handle: title,
     key: "toolDefaultsDockPos",

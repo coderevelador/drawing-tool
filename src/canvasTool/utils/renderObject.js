@@ -1,34 +1,38 @@
-// src/canvasTool/utils/renderObject.js
-// Unified renderer with your legacy object types + enhancements:
-//
-// - line types: solid / dashed / dotted / cloud (revision cloud for rect & closed polyline)
-// - stroke width + opacity, fill + fill opacity
-// - supports: rectangle|rect, circle (r or bbox), line, arrow, pencil (points|path),
-//             polyline (open/closed), callout, snapshot, watermark, text, highlighter, sticky
-
-// ---------- helpers ----------
-
 function applyCommon(ctx, style = {}) {
-  // SAVE first (your old version returned restore without save)
   ctx.save();
 
+  // core stroke/fill
   if (typeof style.opacity === "number") ctx.globalAlpha = style.opacity;
   ctx.lineWidth = style.lineWidth ?? 1;
   ctx.strokeStyle = style.stroke ?? "#000";
   ctx.fillStyle = style.fill ?? "transparent";
+  ctx.lineJoin = style.lineJoin ?? "miter";
+  ctx.miterLimit = style.miterLimit ?? 10;
 
-  // Line type
+  // line type (match RectTool preview)
   const lt = style.lineType || "solid";
-  if (lt === "dashed") ctx.setLineDash([8, 6]);
-  else if (lt === "dotted") ctx.setLineDash([2, 6]);
-  else ctx.setLineDash([]);
+  if (lt === "dashed") {
+    const dash = Math.max(1, Math.floor(style.dashSize ?? ctx.lineWidth * 3));
+    const gap = Math.max(1, Math.floor(style.dashGap ?? ctx.lineWidth * 2));
+    ctx.setLineDash([dash, gap]);
+    ctx.lineCap = style.lineCap ?? "butt";
+  } else if (lt === "dotted") {
+    const dot = Math.max(1, Math.floor(style.dotSize ?? 1));
+    const gap = Math.max(1, Math.floor(style.dotGap ?? ctx.lineWidth * 1.5));
+    ctx.setLineDash([dot, gap]);
+    ctx.lineCap = style.lineCap ?? "round";
+  } else {
+    ctx.setLineDash([]);
+    ctx.lineCap = style.lineCap ?? "butt";
+  }
 
   return () => ctx.restore();
 }
 
 function fillIfNeeded(ctx, style) {
   if (!style) return;
-  const fillEnabled = style.fillEnabled ?? (style.fill && style.fill !== "none");
+  const fillEnabled =
+    style.fillEnabled ?? (style.fill && style.fill !== "none");
   if (!fillEnabled) return;
   const prevAlpha = ctx.globalAlpha;
   const fop = typeof style.fillOpacity === "number" ? style.fillOpacity : 1;
@@ -40,39 +44,126 @@ function fillIfNeeded(ctx, style) {
   }
 }
 
-function strokeCloudAroundPath(ctx, points, amplitude = 8, step = 12) {
-  // points: [{x,y}, ...] closed path expected
+export function strokeCloudAroundPath(ctx, points, radius = 8, opts = {}) {
   if (!points || points.length < 2) return;
+
+  // Back-compat: if `opts` was a number, treat as spacing
+  if (typeof opts === "number") opts = { spacing: opts };
+
+  const r = Math.max(1, radius);
+  const overlap = Math.max(0, Math.min(0.9, opts.overlap ?? 0.35));
+  const sweepDeg = Math.max(60, Math.min(175, opts.sweepDeg ?? 150));
+  const sweep = (sweepDeg * Math.PI) / 180;
+
+  // spacing smaller than diameter -> overlap gives 'C' look
+  const spacing = Math.max(
+    2,
+    Math.floor(opts.spacing ?? 2 * r * (1 - overlap))
+  );
+
+  // Ensure closed loop
   const last = points[points.length - 1];
   const closed = points[0].x === last.x && points[0].y === last.y;
   const pts = closed ? points : points.concat([points[0]]);
 
-  ctx.beginPath();
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i + 1];
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const segLen = Math.hypot(dx, dy) || 1;
-    const ux = dx / segLen, uy = dy / segLen;
-    // outward normal (clockwise assumed)
-    const nx = -uy, ny = ux;
+  // Cloud should be round & undashed
+  ctx.save();
+  ctx.setLineDash([]);
+  const prevCap = ctx.lineCap,
+    prevJoin = ctx.lineJoin;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
 
-    let t = 0;
-    while (t < segLen) {
-      const cx = a.x + ux * t + nx * amplitude;
-      const cy = a.y + uy * t + ny * amplitude;
-      const r = amplitude;
-      if (i === 0 && t === 0) ctx.moveTo(a.x, a.y);
-      ctx.moveTo(a.x + ux * t, a.y + uy * t);
-      ctx.arc(
-        cx, cy, r,
-        Math.atan2(uy, ux) + Math.PI * 0.5,
-        Math.atan2(uy, ux) - Math.PI * 0.5,
-        true
-      );
-      t += step;
+  let started = false;
+  let carry = 0; // keep phase continuous across segments
+
+  const moveArc = (cx, cy, a0, a1, ccw = true) => {
+    const sx = cx + r * Math.cos(a0);
+    const sy = cy + r * Math.sin(a0);
+    if (!started) {
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      started = true;
     }
+    ctx.arc(cx, cy, r, a0, a1, ccw);
+  };
+
+  const drawEdge = (a, b, nextB) => {
+    const dx = b.x - a.x,
+      dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len,
+      uy = dy / len; // tangent
+    const nx = -uy,
+      ny = ux; // outward normal (clockwise path)
+    const theta = Math.atan2(uy, ux);
+
+    // leave a half-spacing margin from corners so edge scallops don't crowd
+    const margin = Math.min(spacing / 2, Math.max(spacing / 2, r));
+    let t = (spacing - (carry % spacing)) % spacing;
+    if (t < margin) t = margin;
+
+    // arc start/end for a 'C' (shorter than semicircle)
+    const a0off = theta + sweep / 2; // start angle (outer)
+    const a1off = theta - sweep / 2; // end angle (inner)
+
+    for (; t <= len - margin + 1e-6; t += spacing) {
+      const cx = a.x + ux * t + nx * r;
+      const cy = a.y + uy * t + ny * r;
+      moveArc(cx, cy, a0off, a1off, true);
+    }
+    carry = (len - (t - spacing)) % spacing;
+
+    // Corner scallop at vertex b (on outward bisector)
+    if (nextB) {
+      const dx2 = nextB.x - b.x,
+        dy2 = nextB.y - b.y;
+      const len2 = Math.hypot(dx2, dy2) || 1;
+      const ux2 = dx2 / len2,
+        uy2 = dy2 / len2;
+      const nx2 = -uy2,
+        ny2 = ux2;
+
+      let bx = nx + nx2,
+        by = ny + ny2;
+      const bl = Math.hypot(bx, by);
+      if (bl > 1e-6) {
+        bx /= bl;
+        by /= bl;
+        const ccx = b.x + bx * r;
+        const ccy = b.y + by * r;
+
+        const theta1 = theta;
+        const theta2 = Math.atan2(uy2, ux2);
+
+        // join edges with a short corner arc (also < 180°)
+        const start = theta1 - sweep / 2;
+        const end = theta2 + sweep / 2;
+
+        // pick shortest sweep direction
+        const norm = (ang) =>
+          ((ang % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        const d = norm(end - start);
+        if (d > Math.PI) {
+          moveArc(ccx, ccy, end, start, false);
+        } else {
+          moveArc(ccx, ccy, start, end, true);
+        }
+      }
+    }
+  };
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i],
+      b = pts[i + 1];
+    const nextB = pts[(i + 2) % pts.length];
+    drawEdge(a, b, nextB);
   }
+
   ctx.stroke();
+  ctx.lineCap = prevCap;
+  ctx.lineJoin = prevJoin;
+  ctx.restore();
 }
 
 // ---------- main ----------
@@ -96,9 +187,14 @@ export function renderObject(ctx, object) {
           { x: x + width, y },
           { x: x + width, y: y + height },
           { x, y: y + height },
-          { x, y }
+          { x, y },
         ];
-        strokeCloudAroundPath(ctx, pts, style.cloudAmplitude ?? 8, style.cloudStep ?? 12);
+        strokeCloudAroundPath(ctx, pts, style.cloudAmplitude ?? 8, {
+          spacing:
+            typeof style.cloudStep === "number" ? style.cloudStep : undefined,
+          overlap: style.cloudOverlap ?? 0.35,
+          sweepDeg: style.cloudSweepDeg ?? 150,
+        });
       } else {
         ctx.beginPath();
         ctx.rect(x, y, width, height);
@@ -119,10 +215,14 @@ export function renderObject(ctx, object) {
         fillIfNeeded(ctx, style);
         ctx.stroke();
       } else {
-        const x = d.x ?? 0, y = d.y ?? 0;
-        const w = Math.abs(d.width ?? 0), h = Math.abs(d.height ?? 0);
-        const rx = w / 2, ry = h / 2;
-        const cx = x + rx, cy = y + ry;
+        const x = d.x ?? 0,
+          y = d.y ?? 0;
+        const w = Math.abs(d.width ?? 0),
+          h = Math.abs(d.height ?? 0);
+        const rx = w / 2,
+          ry = h / 2;
+        const cx = x + rx,
+          cy = y + ry;
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
         fillIfNeeded(ctx, style);
@@ -134,7 +234,10 @@ export function renderObject(ctx, object) {
     // --- Arrow ---
     case "arrow": {
       const d = object.data || {};
-      const x1 = d.x1 ?? 0, y1 = d.y1 ?? 0, x2 = d.x2 ?? 0, y2 = d.y2 ?? 0;
+      const x1 = d.x1 ?? 0,
+        y1 = d.y1 ?? 0,
+        x2 = d.x2 ?? 0,
+        y2 = d.y2 ?? 0;
 
       // Shaft
       ctx.beginPath();
@@ -168,8 +271,8 @@ export function renderObject(ctx, object) {
       const d = object.data || {};
       const x1 = d.x1 ?? d.x ?? 0;
       const y1 = d.y1 ?? d.y ?? 0;
-      const x2 = d.x2 ?? ((d.x ?? 0) + (d.width ?? 0));
-      const y2 = d.y2 ?? ((d.y ?? 0) + (d.height ?? 0));
+      const x2 = d.x2 ?? (d.x ?? 0) + (d.width ?? 0);
+      const y2 = d.y2 ?? (d.y ?? 0) + (d.height ?? 0);
 
       ctx.beginPath();
       ctx.moveTo(x1, y1);
@@ -207,7 +310,13 @@ export function renderObject(ctx, object) {
       ctx.arcTo(x + width, y, x + width, y + cornerRadius, cornerRadius);
 
       ctx.lineTo(x + width, y + height - cornerRadius);
-      ctx.arcTo(x + width, y + height, x + width - cornerRadius, y + height, cornerRadius);
+      ctx.arcTo(
+        x + width,
+        y + height,
+        x + width - cornerRadius,
+        y + height,
+        cornerRadius
+      );
 
       const tailStartX = x + width * 0.7;
       ctx.lineTo(tailStartX + tailWidth, y + height);
@@ -267,7 +376,12 @@ export function renderObject(ctx, object) {
           points[0].y === points[points.length - 1].y
             ? points
             : points.concat([points[0]]);
-        strokeCloudAroundPath(ctx, pathPts, style.cloudAmplitude ?? 8, style.cloudStep ?? 12);
+        strokeCloudAroundPath(
+          ctx,
+          pathPts,
+          style.cloudAmplitude ?? 8,
+          style.cloudStep ?? 12
+        );
       } else {
         ctx.save();
         if (style.stroke) ctx.strokeStyle = style.stroke;
@@ -277,7 +391,8 @@ export function renderObject(ctx, object) {
 
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        for (let i = 1; i < points.length; i++)
+          ctx.lineTo(points[i].x, points[i].y);
         if (closed) {
           ctx.closePath();
           fillIfNeeded(ctx, style);
@@ -363,7 +478,8 @@ export function renderObject(ctx, object) {
       const color = s.stroke || s.fill || "#000000";
       const fontSize = Math.max(10, Number(s.fontSize || 16));
       const fontFamily =
-        s.fontFamily || "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+        s.fontFamily ||
+        "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
       const italic = !!s.italic;
       const bold = !!s.bold;
 
@@ -478,7 +594,8 @@ export function renderObject(ctx, object) {
       const color = s.color || "#111111";
       const fontSize = Math.max(10, Number(s.fontSize || 16));
       const fontFamily =
-        s.fontFamily || "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+        s.fontFamily ||
+        "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
       const opacity = typeof d.opacity === "number" ? d.opacity : 1;
       const radius = Math.max(0, Number(d.radius ?? 10));
       const pad = Math.max(4, Number(d.padding ?? 10));
@@ -561,8 +678,10 @@ export function renderObject(ctx, object) {
       // Fallback: draw a rect if bbox exists
       const d = object.data || {};
       if (
-        typeof d.x === "number" && typeof d.y === "number" &&
-        typeof d.width === "number" && typeof d.height === "number"
+        typeof d.x === "number" &&
+        typeof d.y === "number" &&
+        typeof d.width === "number" &&
+        typeof d.height === "number"
       ) {
         ctx.beginPath();
         ctx.rect(d.x, d.y, d.width, d.height);

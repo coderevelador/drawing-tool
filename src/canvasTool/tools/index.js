@@ -1,5 +1,4 @@
 import { PencilTool } from "./PencilTool";
-import { EraserTool } from "./EraserTool";
 import { LineTool } from "./LineTool";
 import { RectTool } from "./RectTool";
 import { CircleTool } from "./CircleTool";
@@ -15,7 +14,6 @@ import { SchemaRegistry } from "../utils/schemaRegistry";
 
 export const toolRegistry = {
   pencil: new PencilTool(),
-  eraser: new EraserTool(),
   line: new LineTool(),
   rect: new RectTool(),
   circle: new CircleTool(),
@@ -38,7 +36,6 @@ export const toolList = [
   { name: "circle", icon: "⭕", label: "Circle" },
   { name: "arrow", icon: "➡️", label: "Arrow" },
   { name: "callout", icon: "💬", label: "Callout" },
-  { name: "eraser", icon: "🧽", label: "Eraser" },
   { name: "polyline", icon: "〰️", label: "Polyline" },
   { name: "snapshot", icon: "📸", label: "Snapshot" },
   { name: "watermark", icon: "🏷️", label: "Watermark" },
