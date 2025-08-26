@@ -4,6 +4,105 @@ import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
 
 export class PolylineTool extends BaseTool {
+  static defaultsPanel = {
+    fields: [
+      {
+        group: "Stroke",
+        label: "Color",
+        type: "color",
+        path: "style.stroke",
+        default: "#222222",
+      },
+      {
+        group: "Stroke",
+        label: "Width",
+        type: "number",
+        path: "style.lineWidth",
+        default: 2,
+        min: 0,
+        step: 0.5,
+      },
+      {
+        group: "Stroke",
+        label: "Opacity",
+        type: "range",
+        path: "style.opacity",
+        default: 1,
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+      {
+        group: "Stroke",
+        label: "Line Type",
+        type: "select",
+        path: "style.lineType",
+        default: "solid",
+        options: [
+          { label: "Solid", value: "solid" },
+          { label: "Dashed", value: "dashed" },
+          { label: "Dotted", value: "dotted" },
+          { label: "Revision Cloud", value: "cloud" },
+        ],
+      },
+
+      // Optional close/fill
+      {
+        group: "Shape",
+        label: "Closed",
+        type: "checkbox",
+        path: "closed",
+        default: false,
+      },
+      {
+        group: "Fill",
+        label: "Enabled",
+        type: "checkbox",
+        path: "style.fillEnabled",
+        default: false,
+      },
+      {
+        group: "Fill",
+        label: "Color",
+        type: "color",
+        path: "style.fill",
+        default: "#ffffff",
+      },
+      {
+        group: "Fill",
+        label: "Opacity",
+        type: "range",
+        path: "style.fillOpacity",
+        default: 1,
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+
+      // Cloud params
+      {
+        group: "Cloud",
+        label: "Amplitude",
+        type: "number",
+        path: "style.cloudAmplitude",
+        default: 8,
+        min: 2,
+        max: 64,
+        step: 1,
+      },
+      {
+        group: "Cloud",
+        label: "Step",
+        type: "number",
+        path: "style.cloudStep",
+        default: 12,
+        min: 2,
+        max: 64,
+        step: 1,
+      },
+    ],
+  };
+
   constructor() {
     super();
     this.name = "polyline"; // MUST match toolDefaults key
@@ -26,23 +125,23 @@ export class PolylineTool extends BaseTool {
   _applyStroke(ctx, s) {
     ctx.globalAlpha = typeof s.opacity === "number" ? s.opacity : 1;
     ctx.strokeStyle = s.stroke ?? "#000";
-    ctx.lineWidth   = s.lineWidth ?? 2;
-    ctx.lineJoin    = s.lineJoin || "round";
-    ctx.lineCap     = s.lineCap  || "round";
-    ctx.miterLimit  = s.miterLimit ?? 10;
+    ctx.lineWidth = s.lineWidth ?? 2;
+    ctx.lineJoin = s.lineJoin || "round";
+    ctx.lineCap = s.lineCap || "round";
+    ctx.miterLimit = s.miterLimit ?? 10;
     if (s.composite) ctx.globalCompositeOperation = s.composite;
   }
 
   _applyDash(ctx, s) {
     const lt = s.lineType || "solid";
     if (lt === "dashed") {
-      const dash = Math.max(1, Math.floor(s.dashSize ?? (s.lineWidth * 3)));
-      const gap  = Math.max(1, Math.floor(s.dashGap  ?? (s.lineWidth * 2)));
+      const dash = Math.max(1, Math.floor(s.dashSize ?? s.lineWidth * 3));
+      const gap = Math.max(1, Math.floor(s.dashGap ?? s.lineWidth * 2));
       ctx.setLineDash([dash, gap]);
       if (!s.lineCap) ctx.lineCap = "butt";
     } else if (lt === "dotted") {
       const dot = Math.max(1, Math.floor(s.dotSize ?? 1));
-      const gap = Math.max(1, Math.floor(s.dotGap  ?? (s.lineWidth * 1.5)));
+      const gap = Math.max(1, Math.floor(s.dotGap ?? s.lineWidth * 1.5));
       ctx.setLineDash([dot, gap]);
       ctx.lineCap = "round";
     } else {
@@ -55,7 +154,7 @@ export class PolylineTool extends BaseTool {
     const dt = now - this._lastClickAt;
     const dx = pos.x - this._lastClickPos.x;
     const dy = pos.y - this._lastClickPos.y;
-    return dt <= this._dblMs && (dx * dx + dy * dy) <= this._dblDist2;
+    return dt <= this._dblMs && dx * dx + dy * dy <= this._dblDist2;
   }
 
   _beginStroke(engine, pos) {
@@ -75,11 +174,13 @@ export class PolylineTool extends BaseTool {
       opacity: typeof style.opacity === "number" ? style.opacity : 1,
       lineType: style.lineType || "solid",
       lineJoin: style.lineJoin || "round",
-      lineCap:  style.lineCap  || "round",
+      lineCap: style.lineCap || "round",
       miterLimit: style.miterLimit ?? 10,
       composite: style.composite,
-      dashSize: style.dashSize, dashGap: style.dashGap,
-      dotSize:  style.dotSize,  dotGap:  style.dotGap,
+      dashSize: style.dashSize,
+      dashGap: style.dashGap,
+      dotSize: style.dotSize,
+      dotGap: style.dotGap,
       // (renderer uses these only if closed)
       fill: style.fill,
       fillEnabled: style.fillEnabled,
@@ -101,7 +202,7 @@ export class PolylineTool extends BaseTool {
     ctx.save();
     ctx.setLineDash([]);
     ctx.fillStyle = this._styleSnapshot.stroke ?? "#000";
-    const r = Math.max(2, Math.min(3, (this._styleSnapshot.lineWidth ?? 2)));
+    const r = Math.max(2, Math.min(3, this._styleSnapshot.lineWidth ?? 2));
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
     ctx.fill();
@@ -124,7 +225,8 @@ export class PolylineTool extends BaseTool {
 
     ctx.beginPath();
     ctx.moveTo(this._points[0].x, this._points[0].y);
-    for (let i = 1; i < this._points.length; i++) ctx.lineTo(this._points[i].x, this._points[i].y);
+    for (let i = 1; i < this._points.length; i++)
+      ctx.lineTo(this._points[i].x, this._points[i].y);
     if (cursorPos) ctx.lineTo(cursorPos.x, cursorPos.y);
     ctx.stroke();
 
@@ -132,7 +234,7 @@ export class PolylineTool extends BaseTool {
     ctx.save();
     ctx.setLineDash([]);
     ctx.fillStyle = s.stroke ?? "#000";
-    const r = Math.max(2, Math.min(3, (s.lineWidth ?? 2)));
+    const r = Math.max(2, Math.min(3, s.lineWidth ?? 2));
     for (const p of this._points) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
@@ -198,7 +300,8 @@ export class PolylineTool extends BaseTool {
 
       ctx.beginPath();
       ctx.moveTo(this._points[0].x, this._points[0].y);
-      for (let i = 1; i < this._points.length; i++) ctx.lineTo(this._points[i].x, this._points[i].y);
+      for (let i = 1; i < this._points.length; i++)
+        ctx.lineTo(this._points[i].x, this._points[i].y);
       ctx.lineTo(pos.x, pos.y);
       ctx.stroke();
 
@@ -206,7 +309,7 @@ export class PolylineTool extends BaseTool {
       ctx.save();
       ctx.setLineDash([]);
       ctx.fillStyle = s.stroke ?? "#000";
-      const r = Math.max(2, Math.min(3, (s.lineWidth ?? 2)));
+      const r = Math.max(2, Math.min(3, s.lineWidth ?? 2));
       for (const p of this._points) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);

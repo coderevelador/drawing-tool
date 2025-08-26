@@ -2,8 +2,163 @@
 import { useCanvasStore } from "../state/canvasStore";
 import { makeDraggable } from "./draggable";
 
+const dget = (obj, path) =>
+  path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
+const dset = (obj, path, v) => {
+  const ks = path.split(".");
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) {
+    const k = ks[i];
+    if (o[k] == null || typeof o[k] !== "object") o[k] = {};
+    o = o[k];
+  }
+  o[ks.at(-1)] = v;
+};
+
+function mkRow(label, input) {
+  const wrap = document.createElement("label");
+  Object.assign(wrap.style, {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "8px",
+    margin: "6px 0",
+  });
+  const lab = document.createElement("div");
+  lab.textContent = label;
+  lab.style.opacity = 0.9;
+  wrap.appendChild(lab);
+  wrap.appendChild(input);
+  return wrap;
+}
+const mk = {
+  color() {
+    const i = document.createElement("input");
+    i.type = "color";
+    i.style.height = "28px";
+    return i;
+  },
+  num(min, max, step = 1) {
+    const i = document.createElement("input");
+    i.type = "number";
+    if (min != null) i.min = String(min);
+    if (max != null) i.max = String(max);
+    i.step = String(step);
+    Object.assign(i.style, {
+      height: "28px",
+      background: "#0e142b",
+      color: "#eee",
+      border: "1px solid rgba(255,255,255,.12)",
+      borderRadius: "6px",
+      padding: "0 6px",
+    });
+    return i;
+  },
+  range(min, max, step = 0.05) {
+    const i = document.createElement("input");
+    i.type = "range";
+    i.min = String(min);
+    i.max = String(max);
+    i.step = String(step);
+    i.style.width = "100%";
+    return i;
+  },
+  check() {
+    const i = document.createElement("input");
+    i.type = "checkbox";
+    i.style.transform = "translateY(1px)";
+    return i;
+  },
+  select(options) {
+    const s = document.createElement("select");
+    Object.assign(s.style, {
+      height: "28px",
+      background: "#0e142b",
+      color: "#eee",
+      border: "1px solid rgba(255,255,255,.12)",
+      borderRadius: "6px",
+      padding: "0 6px",
+    });
+    (options || []).forEach((o) => {
+      const op = document.createElement("option");
+      op.value = o.value ?? o;
+      op.textContent = o.label ?? o;
+      s.appendChild(op);
+    });
+    return s;
+  },
+};
+
+function resolveActiveToolName(store, engine) {
+  try {
+    const s = store.getState ? store.getState() : {};
+    return s.currentTool ?? s.activeTool ?? engine?.activeTool ?? null;
+  } catch {
+    return engine?.activeTool ?? null;
+  }
+}
+
+function resolveToolClass(engine, toolName) {
+  if (!toolName) return null;
+
+  // 1) registry with constructors
+  if (engine?.toolRegistry) {
+    const c = engine.toolRegistry[toolName];
+    if (typeof c === "function") return c;
+    if (c?.constructor) return c.constructor;
+  }
+
+  // 2) tools map could be instance OR constructor
+  const maybe = engine?.tools?.[toolName];
+  if (typeof maybe === "function") return maybe; // it's a class/constructor
+  if (maybe?.constructor && maybe.constructor !== Object) {
+    return maybe.constructor;
+  }
+
+  // 3) nothing found
+  return null;
+}
+
+function buildField(field, defaults, write, title) {
+  const { type, label, path, min, max, step, options } = field;
+  let input;
+  if (type === "color") input = mk.color();
+  else if (type === "number") input = mk.num(min, max, step);
+  else if (type === "range") input = mk.range(min, max, step);
+  else if (type === "checkbox") input = mk.check();
+  else if (type === "select") input = mk.select(options || []);
+  else return null;
+
+  const current = path ? dget(defaults, path) : undefined;
+  if (type === "checkbox") input.checked = !!current;
+  else if (current != null) input.value = String(current);
+  else if (type === "color") input.value = "#000000";
+
+  const commit = () => {
+    const patch = { style: {}, data: {} };
+    // keep __enabled if already set
+    if ("__enabled" in defaults) patch.__enabled = defaults.__enabled;
+
+    const val =
+      type === "checkbox"
+        ? !!input.checked
+        : type === "number"
+        ? parseFloat(input.value)
+        : type === "range"
+        ? parseFloat(input.value)
+        : input.value;
+
+    if (path) dset(patch, path, val);
+    write(patch);
+  };
+
+  input.addEventListener("input", commit);
+  input.addEventListener("change", commit);
+  return mkRow(label, input);
+}
+
 export function ensureToolDefaultsDock(engine) {
-  const store = engine.store;
+  const store = engine?.store || useCanvasStore;
+
   const el = document.createElement("div");
   el.dataset.role = "tool-defaults-dock";
   Object.assign(el.style, {
@@ -17,7 +172,7 @@ export function ensureToolDefaultsDock(engine) {
     borderRadius: "12px",
     boxShadow: "0 6px 24px rgba(0,0,0,.35)",
     font: "12px system-ui",
-    minWidth: "240px",
+    minWidth: "260px",
     pointerEvents: "auto",
     border: "1px solid rgba(255,255,255,.08)",
   });
@@ -30,227 +185,115 @@ export function ensureToolDefaultsDock(engine) {
   });
   el.appendChild(title);
 
-  const row = (label, input) => {
-    const wrap = document.createElement("label");
-    Object.assign(wrap.style, {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: "8px",
-      margin: "6px 0",
-    });
-    const lab = document.createElement("div");
-    lab.textContent = label;
-    lab.style.opacity = 0.9;
-    wrap.appendChild(lab);
-    wrap.appendChild(input);
-    return wrap;
-  };
-  const mkColor = () => {
-    const i = document.createElement("input");
-    i.type = "color";
-    i.style.height = "28px";
-    return i;
-  };
-  const mkNum = (min, max, step = 1) => {
-    const i = document.createElement("input");
-    i.type = "number";
-    if (min != null) i.min = min;
-    if (max != null) i.max = max;
-    i.step = step;
-    Object.assign(i.style, {
-      height: "28px",
-      background: "#0e142b",
-      color: "#eee",
-      border: "1px solid rgba(255,255,255,.12)",
-      borderRadius: "6px",
-      padding: "0 6px",
-    });
-    return i;
-  };
-  const mkRange = (min, max, step = 0.05) => {
-    const i = document.createElement("input");
-    i.type = "range";
-    i.min = min;
-    i.max = max;
-    i.step = step;
-    i.style.width = "100%";
-    return i;
-  };
-  const mkSelect = (opts) => {
-    const s = document.createElement("select");
-    Object.assign(s.style, {
-      height: "28px",
-      background: "#0e142b",
-      color: "#eee",
-      border: "1px solid rgba(255,255,255,.12)",
-      borderRadius: "6px",
-      padding: "0 6px",
-    });
-    opts.forEach((o) => {
-      const op = document.createElement("option");
-      op.value = o.value ?? o;
-      op.textContent = o.label ?? o;
-      s.appendChild(op);
-    });
-    return s;
-  };
-  const mkCheck = () => {
-    const i = document.createElement("input");
-    i.type = "checkbox";
-    i.style.transform = "translateY(1px)";
-    return i;
+  const controls = document.createElement("div");
+  controls.dataset.role = "controls";
+  el.appendChild(controls);
+
+  const write = (patch) => {
+    try {
+      const s = store.getState ? store.getState() : {};
+      const toolName = resolveActiveToolName(store, engine);
+      if (typeof s.setToolDefaults === "function") {
+        s.setToolDefaults(toolName, patch);
+      } else if (typeof store.setState === "function") {
+        // fallback merge
+        const td = { ...(s.toolDefaults || {}) };
+        td[toolName] = { ...(td[toolName] || {}), ...patch };
+        store.setState({ toolDefaults: td });
+      }
+    } catch (e) {
+      console.warn("[ToolDefaultsDock] write failed:", e);
+    }
   };
 
-  const read = () => {
-    const s = store.getState();
-    const t = s.currentTool;
-    return {
-      tool: t,
-      defaults: (s.toolDefaults && s.toolDefaults[t]) || { style: {} },
-    };
-  };
-  const write = (patch) =>
-    store.getState().setToolDefaults?.(store.getState().currentTool, patch);
-
-  let ui = {};
   const rebuild = () => {
-    const old = el.querySelector("[data-role='controls']");
-    if (old) old.remove();
-    const controls = document.createElement("div");
-    controls.dataset.role = "controls";
-    el.appendChild(controls);
+    controls.innerHTML = "";
 
-    const { tool, defaults } = read();
-    const style = defaults.style || {};
-    title.textContent = `Tool Defaults — ${tool}`;
+    const s = store.getState ? store.getState() : {};
+    const toolName = resolveActiveToolName(store, engine);
+    title.textContent = `Tool Defaults — ${toolName ?? "—"}`;
 
-    if (tool === "snapshot") {
+    const defaults =
+      (s.toolDefaults && toolName && s.toolDefaults[toolName]) || {};
+    const ToolClass = resolveToolClass(engine, toolName);
+    const panel = ToolClass?.defaultsPanel;
+
+    // Hide dock for tools that request it
+    if (panel?.hideDock) {
       el.style.display = "none";
       return;
-    } else {
-      el.style.display = "";
+    }
+    el.style.display = "";
+
+    if (!panel || !Array.isArray(panel.fields)) {
+      // Nothing to render; don’t crash
+      const msg = document.createElement("div");
+      msg.textContent = panel
+        ? "This tool has no defaults panel."
+        : "No defaultsPanel found on the tool class.";
+      msg.style.opacity = 0.75;
+      controls.appendChild(msg);
+      console.warn(
+        "[ToolDefaultsDock] No defaultsPanel for tool:",
+        toolName,
+        " ToolClass:",
+        ToolClass
+      );
+      return;
     }
 
-    // Common stroke controls
-    ui.stroke = mkColor();
-    ui.stroke.value = style.stroke ?? "#000000";
+    // Optional per-tool enable switch
+    if (panel.hasEnableToggle) {
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.checked = !!defaults.__enabled;
+      const wrap = mkRow("Enable for this tool", toggle);
+      controls.appendChild(wrap);
 
-    ui.lineWidth = mkNum(1, 64, 1);
-    ui.lineWidth.value = style.lineWidth ?? 2;
-
-    const allowLineType = tool !== "callout"; // hide for callout
-    if (allowLineType) {
-      const toolLineTypeOptions = (() => {
-        if (tool === "polyline" || tool === "rect" || tool === "rectangle") {
-          return [
-            { value: "solid", label: "Solid" },
-            { value: "dashed", label: "Dashed" },
-            { value: "dotted", label: "Dotted" },
-            { value: "cloud", label: "Revision Cloud" },
-          ];
-        }
-        return [
-          { value: "solid", label: "Solid" },
-          { value: "dashed", label: "Dashed" },
-          { value: "dotted", label: "Dotted" },
-        ];
-      })();
-      ui.lineType = mkSelect(toolLineTypeOptions);
-      ui.lineType.value = style.lineType ?? "solid";
-    }
-
-    controls.appendChild(row("Stroke", ui.stroke));
-    controls.appendChild(row("Width", ui.lineWidth));
-    if (allowLineType && ui.lineType)
-      controls.appendChild(row("Line type", ui.lineType));
-
-    // Fill controls (Rect/Circle) — leave as-is; callout uses inspector for text/fill
-    const fillable = ["rect", "rectangle", "circle", "ellipse"].includes(tool);
-    if (fillable) {
-      ui.fillEnabled = mkCheck();
-      ui.fillEnabled.checked = style.fillEnabled ?? false;
-      ui.fill = mkColor();
-      ui.fill.value = style.fill ?? "#ffffff";
-      ui.fillOpacity = mkRange(0, 1, 0.05);
-      ui.fillOpacity.value = style.fillOpacity ?? 1;
-      controls.appendChild(row("Filled", ui.fillEnabled));
-      controls.appendChild(row("Fill color", ui.fill));
-      controls.appendChild(row("Fill opacity", ui.fillOpacity));
-    }
-
-    // Stroke opacity
-    ui.opacity = mkRange(0, 1, 0.05);
-    ui.opacity.value = style.opacity ?? 1;
-    controls.appendChild(row("Stroke opacity", ui.opacity));
-
-    // Cloud params (only if lineType exists AND chosen to "cloud")
-    const showCloud = () => {
-      if (!ui.lineType) return; // no line type selector (e.g., callout)
-      const lt = ui.lineType.value;
-      const supportsCloud = ["rect", "rectangle", "polyline"].includes(tool);
-      let cloudWrap = controls.querySelector("[data-role='cloud']");
-      if (lt === "cloud" && supportsCloud) {
-        if (!cloudWrap) {
-          cloudWrap = document.createElement("div");
-          cloudWrap.dataset.role = "cloud";
-          cloudWrap.style.marginTop = "6px";
-          cloudWrap.style.paddingTop = "6px";
-          cloudWrap.style.borderTop = "1px dashed rgba(255,255,255,.15)";
-          ui.cloudAmplitude = mkNum(2, 64, 1);
-          ui.cloudAmplitude.value = style.cloudAmplitude ?? 8;
-          ui.cloudStep = mkNum(2, 64, 1);
-          ui.cloudStep.value = style.cloudStep ?? 12;
-          cloudWrap.appendChild(row("Cloud amplitude", ui.cloudAmplitude));
-          cloudWrap.appendChild(row("Cloud step", ui.cloudStep));
-          controls.appendChild(cloudWrap);
-        }
-      } else if (cloudWrap) {
-        cloudWrap.remove();
-        delete ui.cloudAmplitude;
-        delete ui.cloudStep;
-      }
-    };
-    if (ui.lineType) {
-      ui.lineType.onchange = showCloud;
-      showCloud();
-    }
-
-    // Polyline closed toggle
-    if (tool === "polyline") {
-      ui.closed = mkCheck();
-      ui.closed.checked = defaults.closed ?? false;
-      controls.appendChild(row("Closed path", ui.closed));
-    }
-
-    const commit = () => {
-      const patch = {
-        style: {
-          stroke: ui.stroke.value,
-          lineWidth: parseFloat(ui.lineWidth.value || "2"),
-          opacity: parseFloat(ui.opacity.value || "1"),
-        },
+      const setDisabled = (off) => {
+        controls.querySelectorAll("label").forEach((lab) => {
+          if (lab === wrap) return;
+          lab.style.opacity = off ? "0.5" : "1";
+          lab.querySelectorAll("input,select,textarea").forEach((i) => {
+            i.disabled = off;
+            i.style.pointerEvents = off ? "none" : "auto";
+          });
+        });
       };
-      if (ui.lineType) {
-        patch.style.lineType = ui.lineType.value;
-      }
-      if (ui.fill) {
-        patch.style.fill = ui.fill.value;
-        patch.style.fillEnabled = !!ui.fillEnabled.checked;
-        patch.style.fillOpacity = parseFloat(ui.fillOpacity.value || "1");
-      }
-      if (ui.cloudAmplitude) {
-        patch.style.cloudAmplitude = parseFloat(ui.cloudAmplitude.value || "8");
-        patch.style.cloudStep = parseFloat(ui.cloudStep.value || "12");
-      }
-      if (ui.closed) patch.closed = !!ui.closed.checked;
-      write(patch);
+      setDisabled(!toggle.checked);
+
+      toggle.addEventListener("change", () => {
+        write({ __enabled: !!toggle.checked });
+        setDisabled(!toggle.checked);
+      });
+    }
+
+    // Build grouped fields
+    const groups = new Map(); // groupName -> container
+    const ensureGroup = (name) => {
+      if (!name) return controls;
+      if (groups.has(name)) return groups.get(name);
+      const hdr = document.createElement("div");
+      hdr.textContent = name;
+      Object.assign(hdr.style, {
+        marginTop: "6px",
+        fontWeight: 700,
+        opacity: 0.8,
+      });
+      const box = document.createElement("div");
+      controls.appendChild(hdr);
+      controls.appendChild(box);
+      groups.set(name, box);
+      return box;
     };
 
-    Object.values(ui).forEach((elm) => {
-      if (elm && elm.addEventListener) {
-        elm.addEventListener("input", commit);
-        elm.addEventListener("change", commit);
-      }
+    // Snapshot of defaults for showIf evaluation
+    const snapshot = JSON.parse(JSON.stringify(defaults));
+
+    panel.fields.forEach((f) => {
+      if (typeof f.showIf === "function" && !f.showIf(snapshot)) return;
+      const node = buildField(f, defaults, write, title);
+      if (node) ensureGroup(f.group).appendChild(node);
     });
   };
 
@@ -261,8 +304,16 @@ export function ensureToolDefaultsDock(engine) {
   });
   rebuild();
 
+  // Rebuild when tool changes OR toolDefaults map changes
   const unsub = useCanvasStore.subscribe((state, prev) => {
-    if (state.currentTool !== prev.currentTool) rebuild();
+    const toolNow =
+      state.currentTool ?? state.activeTool ?? engine?.activeTool ?? null;
+    const toolPrev =
+      prev.currentTool ?? prev.activeTool ?? engine?.activeTool ?? null;
+
+    if (toolNow !== toolPrev || state.toolDefaults !== prev.toolDefaults) {
+      rebuild();
+    }
   });
 
   return {

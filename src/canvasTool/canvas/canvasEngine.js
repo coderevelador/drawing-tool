@@ -9,6 +9,9 @@ export class CanvasEngine {
     this.width = canvas.width;
     this.height = canvas.height;
 
+    this.toolRegistry = toolRegistry; // map: name -> instance
+    this.tools = toolRegistry;
+
     // Layer snapshots
     this.backgroundSnapshot = null;
     this.drawingSnapshot = null;

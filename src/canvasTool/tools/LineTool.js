@@ -6,35 +6,119 @@ import { useCanvasStore } from "../state/canvasStore";
 export class LineTool extends BaseTool {
   static inspector = [
     { group: "Style", label: "Stroke", type: "color", path: "style.stroke" },
-    { group: "Style", label: "Width", type: "number", path: "style.lineWidth", min: 1, step: 1 },
-    { group: "FX", label: "Opacity", type: "range", path: "style.opacity", min: 0, max: 1, step: 0.05 },
+    {
+      group: "Style",
+      label: "Width",
+      type: "number",
+      path: "style.lineWidth",
+      min: 1,
+      step: 1,
+    },
+    {
+      group: "FX",
+      label: "Opacity",
+      type: "range",
+      path: "style.opacity",
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
   ];
+
+  static defaultsPanel = {
+    fields: [
+      {
+        group: "Stroke",
+        label: "Color",
+        type: "color",
+        path: "style.stroke",
+        default: "#222222",
+      },
+      {
+        group: "Stroke",
+        label: "Width",
+        type: "number",
+        path: "style.lineWidth",
+        default: 2,
+        min: 0,
+        step: 0.5,
+      },
+      {
+        group: "Stroke",
+        label: "Opacity",
+        type: "range",
+        path: "style.opacity",
+        default: 1,
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+      {
+        group: "Stroke",
+        label: "Line Type",
+        type: "select",
+        path: "style.lineType",
+        default: "solid",
+        options: [
+          { label: "Solid", value: "solid" },
+          { label: "Dashed", value: "dashed" },
+          { label: "Dotted", value: "dotted" },
+        ],
+      },
+
+      // Optional arrows (if supported by your renderer)
+      {
+        group: "Arrows",
+        label: "Arrow Start",
+        type: "checkbox",
+        path: "meta.arrowStart",
+        default: false,
+      },
+      {
+        group: "Arrows",
+        label: "Arrow End",
+        type: "checkbox",
+        path: "meta.arrowEnd",
+        default: false,
+      },
+      {
+        group: "Arrows",
+        label: "Head Size",
+        type: "number",
+        path: "meta.arrowSize",
+        default: 10,
+        min: 4,
+        max: 48,
+        step: 1,
+      },
+    ],
+  };
 
   constructor() {
     super();
-    this.name = "line";           // MUST match store.toolDefaults key
+    this.name = "line"; // MUST match store.toolDefaults key
     this.startPos = null;
     this.snapshot = null;
-    this._styleSnapshot = null;   // freeze defaults for this stroke
+    this._styleSnapshot = null; // freeze defaults for this stroke
   }
 
   _applyStrokeStyle(ctx, s) {
     ctx.globalAlpha = typeof s.opacity === "number" ? s.opacity : 1;
     ctx.strokeStyle = s.stroke ?? "#000";
-    ctx.lineWidth   = s.lineWidth ?? 2;
-    ctx.lineJoin    = s.lineJoin || "miter";
-    ctx.lineCap     = s.lineCap  || "butt";
-    ctx.miterLimit  = s.miterLimit ?? 10;
+    ctx.lineWidth = s.lineWidth ?? 2;
+    ctx.lineJoin = s.lineJoin || "miter";
+    ctx.lineCap = s.lineCap || "butt";
+    ctx.miterLimit = s.miterLimit ?? 10;
     // solid / dashed / dotted only (no cloud for line)
     const lt = s.lineType || "solid";
     if (lt === "dashed") {
-      const dash = Math.max(1, Math.floor(s.dashSize ?? (s.lineWidth * 3)));
-      const gap  = Math.max(1, Math.floor(s.dashGap  ?? (s.lineWidth * 2)));
+      const dash = Math.max(1, Math.floor(s.dashSize ?? s.lineWidth * 3));
+      const gap = Math.max(1, Math.floor(s.dashGap ?? s.lineWidth * 2));
       ctx.setLineDash([dash, gap]);
       if (!s.lineCap) ctx.lineCap = "butt";
     } else if (lt === "dotted") {
       const dot = Math.max(1, Math.floor(s.dotSize ?? 1));
-      const gap = Math.max(1, Math.floor(s.dotGap  ?? (s.lineWidth * 1.5)));
+      const gap = Math.max(1, Math.floor(s.dotGap ?? s.lineWidth * 1.5));
       ctx.setLineDash([dot, gap]);
       ctx.lineCap = "round";
     } else {
@@ -52,12 +136,15 @@ export class LineTool extends BaseTool {
       stroke: style.stroke ?? "#000",
       lineWidth: style.lineWidth ?? 2,
       opacity: typeof style.opacity === "number" ? style.opacity : 1,
-      lineType: (style.lineType === "cloud" ? "solid" : style.lineType) || "solid",
+      lineType:
+        (style.lineType === "cloud" ? "solid" : style.lineType) || "solid",
       lineJoin: style.lineJoin,
       lineCap: style.lineCap,
       miterLimit: style.miterLimit,
-      dashSize: style.dashSize, dashGap: style.dashGap,
-      dotSize: style.dotSize,   dotGap:  style.dotGap,
+      dashSize: style.dashSize,
+      dashGap: style.dashGap,
+      dotSize: style.dotSize,
+      dotGap: style.dotGap,
     };
 
     this._applyStrokeStyle(engine.ctx, this._styleSnapshot);
@@ -88,7 +175,12 @@ export class LineTool extends BaseTool {
     store.addObject(
       new CanvasObject({
         type: "line",
-        data: { x1: this.startPos.x, y1: this.startPos.y, x2: pos.x, y2: pos.y },
+        data: {
+          x1: this.startPos.x,
+          y1: this.startPos.y,
+          x2: pos.x,
+          y2: pos.y,
+        },
         style: { ...this._styleSnapshot },
         layer: maxLayer + 1,
       })

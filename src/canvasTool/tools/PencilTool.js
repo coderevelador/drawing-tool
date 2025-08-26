@@ -41,6 +41,20 @@ export class PencilTool extends BaseTool {
     { group: "Stroke", label: "Dot gap",   type: "number", path: "style.dotGap",   min: 1, step: 1, showIf: (o) => o?.style?.dotGap   != null },
   ];
 
+  static defaultsPanel = {
+  fields: [
+    { group: "Stroke",    label: "Color",      type: "color",  path: "style.stroke",    default: "#1f2937" },
+    { group: "Stroke",    label: "Width",      type: "number", path: "style.lineWidth", default: 2, min: 0.5, max: 24, step: 0.5 },
+    { group: "Stroke",    label: "Opacity",    type: "range",  path: "style.opacity",   default: 1, min: 0, max: 1, step: 0.05 },
+    { group: "Behavior",  label: "Smoothing",  type: "range",  path: "meta.smoothing",  default: 0.5, min: 0, max: 1, step: 0.05 },
+    { group: "Behavior",  label: "Streamline", type: "range",  path: "meta.streamline", default: 0.4, min: 0, max: 1, step: 0.05 },
+    { group: "Caps",      label: "Line Cap",   type: "select", path: "style.lineCap",   default: "round",
+      options: [{label:"Butt",value:"butt"},{label:"Round",value:"round"},{label:"Square",value:"square"}]
+    }
+  ]
+};
+
+
   constructor() {
     super();
     this.name = "pencil";          // MUST match store.toolDefaults key

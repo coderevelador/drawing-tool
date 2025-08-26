@@ -1,3 +1,4 @@
+// src/canvasTool/tools/WatermarkTool.js
 import { BaseTool } from "./BaseTool";
 import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
@@ -6,229 +7,246 @@ export class WatermarkTool extends BaseTool {
   static inspector = [
     { group: "Position", label: "X", type: "number", path: "data.x" },
     { group: "Position", label: "Y", type: "number", path: "data.y" },
-    { group: "Text", label: "Content", type: "textarea", path: "data.text" },
-    {
-      group: "Style",
-      label: "Font size",
-      type: "number",
-      path: "style.fontSize",
-      min: 8,
-    },
-    { group: "Style", label: "Color", type: "color", path: "style.fill" },
-    {
-      group: "FX",
-      label: "Opacity",
-      type: "range",
-      path: "style.opacity",
-      min: 0,
-      max: 1,
-      step: 0.05,
-    },
-    {
-      group: "Options",
-      label: "Angle",
-      type: "number",
-      path: "data.angle",
-      step: 1,
-    },
+    { group: "Text",     label: "Content", type: "textarea", path: "data.text" },
+    { group: "Style",    label: "Font size", type: "number", path: "style.fontSize", min: 8 },
+    { group: "Style",    label: "Color", type: "color", path: "style.fill" },
+    { group: "FX",       label: "Opacity", type: "range", path: "style.opacity", min: 0, max: 1, step: 0.05 },
+    { group: "Options",  label: "Tiled", type: "checkbox", path: "data.tiled" },
+    { group: "Options",  label: "Angle (tiled)", type: "number", path: "data.rotationDeg", step: 1 },
+    { group: "Options",  label: "Spacing xFS", type: "number", path: "data.spacingFactor", step: 0.5 },
   ];
 
   constructor() {
     super();
     this.name = "watermark";
 
-    // live state
-    this.drawing = false;
-    this.currPos = null;
+    this.editing = false;
+    this.pos = null;
+    this.text = ""; // no default words; caret only until user types
 
-    // settings
-    this.opacity = 0.18; // 0..1
-    this.rotationDeg = -30; // tiled mode
-    this.spacingFactor = 6; // tiled spacing = fontSize * factor
+    this.input = null;   // overlay textarea for caret & input
+    this._unsub = null;  // store subscription
 
-    // text handling
-    this.text = null; // ask per placement
-    this.lastText = "WATERMARK";
+    // sensible defaults if not set in tool defaults
+    this.defaultOpacity = 0.18;
+    this.defaultFontSize = 32;
+    this.defaultRotationDeg = -30;
+    this.defaultSpacingFactor = 6;
   }
 
-  // font size from your Width slider (consistent with other tools)
-  _fontSizeFrom(state) {
-    const lw = Number(state.lineWidth ?? 2);
-    return Math.max(12, Math.round(lw * 8)); // e.g., 2->16px, 5->40px
+  // ---- helpers ----
+  _store(engine) {
+    return engine?.store && typeof engine.store.getState === "function"
+      ? engine.store
+      : useCanvasStore;
+  }
+
+  _readStyle(engine) {
+    const s = this._store(engine).getState();
+    const td = (s.toolDefaults && s.toolDefaults[this.name]) || {};
+    const st = td.style || {};
+    const dt = td.data  || {};
+
+    // NOTE: no lineType / lineWidth here (not used for watermark)
+    const color   = st.fill ?? st.stroke ?? s.color ?? "#000000";
+    const fontSize = Math.max(8, Number(st.fontSize ?? this.defaultFontSize));
+    const opacity  = (typeof st.opacity === "number") ? st.opacity : this.defaultOpacity;
+
+    const tiled         = !!dt.tiled;
+    const rotationDeg   = Number(dt.rotationDeg ?? this.defaultRotationDeg);
+    const spacingFactor = Number(dt.spacingFactor ?? this.defaultSpacingFactor);
+
+    return { color, fontSize, opacity, tiled, rotationDeg, spacingFactor };
+  }
+
+  _toClient(engine, p) {
+    const canvas = engine.canvas || engine.ctx?.canvas;
+    const r = canvas.getBoundingClientRect();
+    const sx = r.width / canvas.width;
+    const sy = r.height / canvas.height;
+    return { left: r.left + p.x * sx, top: r.top + p.y * sy };
+  }
+
+  _ensureInput(engine) {
+    if (this.input) return;
+
+    const ta = document.createElement("textarea");
+    Object.assign(ta.style, {
+      position: "absolute",
+      left: "0px",
+      top: "0px",
+      width: "320px",
+      height: "1.8em",
+      background: "transparent",
+      color: "transparent",    // hide DOM text; we paint to canvas
+      caretColor: "#00ffd0",   // blinking caret
+      outline: "none",
+      border: "1px dashed rgba(0,0,0,0.25)",
+      padding: "4px 8px",
+      resize: "none",
+      zIndex: 10060,
+      font: "16px system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+      whiteSpace: "pre-wrap",
+      overflow: "hidden",
+    });
+    document.body.appendChild(ta);
+    this.input = ta;
+
+    // type => live paint
+    ta.addEventListener("input", () => {
+      this.text = ta.value;
+      this._composePreview(engine);
+      const { fontSize } = this._readStyle(engine);
+      const lines = Math.max(1, this.text.split("\n").length);
+      ta.style.height = Math.min(6, lines) * (fontSize * 1.35) + "px";
+    });
+
+    // commit/cancel
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._commit(engine); }
+      else if (e.key === "Escape") { e.preventDefault(); this._cancel(engine); }
+    });
+
+    // reflect dock/default changes live
+    const store = this._store(engine);
+    this._unsub = store.subscribe((state, prev) => {
+      if (state.toolDefaults !== prev.toolDefaults ||
+          state.color !== prev.color) {
+        if (this.editing) this._composePreview(engine);
+      }
+    });
+  }
+
+  _positionInput(engine) {
+    if (!this.input || !this.pos) return;
+    const { left, top } = this._toClient(engine, this.pos);
+    const { fontSize } = this._readStyle(engine);
+    this.input.style.left = Math.round(left) + "px";
+    this.input.style.top  = Math.round(top - fontSize * 0.8) + "px";
+    this.input.style.fontSize = fontSize + "px";
+  }
+
+  _destroyInput() {
+    if (this._unsub) { try { this._unsub(); } catch {} this._unsub = null; }
+    if (this.input) { this.input.remove(); this.input = null; }
   }
 
   _composePreview(engine) {
-    if (!this.drawing || !this.currPos || !this.text) {
-      console.log("Preview skipped:", {
-        drawing: this.drawing,
-        currPos: this.currPos,
-        text: this.text,
-      });
-      return;
-    }
+    if (!this.editing || !this.pos) return;
+
+    const { color, fontSize, opacity } = this._readStyle(engine);
+    const ctx = engine.ctx;
 
     // baseline
     engine.renderAllObjects();
 
-    // pull style from zustand store (same path as others)
-    const storeRef =
-      engine?.store && typeof engine.store.getState === "function"
-        ? engine.store
-        : useCanvasStore;
-    const s = storeRef.getState();
-    const color = s.color ?? "#000000";
-    const fs = this._fontSizeFrom(s);
+    // draw typed text (if any). If empty, we draw nothing — only caret blinks
+    if (this.text && this.text.length) {
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
 
-    console.log("Preview watermark:", {
-      text: this.text,
-      pos: this.currPos,
-      color,
-      fontSize: fs,
-      opacity: this.opacity,
-    });
-
-    const ctx = engine.ctx;
-    ctx.save();
-    ctx.globalAlpha = this.opacity;
-    ctx.fillStyle = color;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = `${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
-
-    // Debug: Draw a visible rectangle to see if we're drawing at all
-    ctx.strokeStyle = color;
-    ctx.strokeRect(this.currPos.x - 5, this.currPos.y - 5, 10, 10);
-
-    ctx.fillText(this.text, this.currPos.x, this.currPos.y);
-    ctx.restore();
-  }
-
-  _commit(engine, targetPos, tiled) {
-    if (!this.text || !targetPos) {
-      // nothing to place
-      console.log("Commit aborted:", { text: this.text, targetPos });
-      this.drawing = false;
-      this.currPos = null;
-      engine.renderAllObjects();
-      return;
+      const lines = String(this.text).split("\n");
+      const lh = Math.round(fontSize * 1.3);
+      let y = this.pos.y - ((lines.length - 1) * lh) / 2;
+      for (const ln of lines) {
+        ctx.fillText(ln, this.pos.x, y);
+        y += lh;
+      }
+      ctx.restore();
     }
 
-    const storeRef =
-      engine?.store && typeof engine.store.getState === "function"
-        ? engine.store
-        : useCanvasStore;
-    const s = storeRef.getState();
-    const maxLayer = s.objects.length
-      ? Math.max(...s.objects.map((o) => o.layer))
+    // keep input caret aligned
+    this._positionInput(engine);
+  }
+
+  _commit(engine) {
+    if (!this.editing || !this.pos) return;
+    const txt = (this.text || "").trim();
+    if (!txt) { this._cancel(engine); return; }
+
+    const { color, fontSize, opacity, tiled, rotationDeg, spacingFactor } = this._readStyle(engine);
+    const store = useCanvasStore.getState();
+    const maxLayer = store.objects.length
+      ? Math.max(...store.objects.map(o => o.layer || 0))
       : 0;
 
-    const watermarkObject = new CanvasObject({
+    store.addObject(new CanvasObject({
       type: "watermark",
       data: {
-        x: Number(targetPos.x),
-        y: Number(targetPos.y),
-        text: this.text,
-        tiled: !!tiled,
-        opacity: this.opacity,
-        rotationDeg: this.rotationDeg,
-        spacingFactor: this.spacingFactor,
+        x: this.pos.x,
+        y: this.pos.y,
+        text: txt,
+        tiled,
+        opacity,
+        rotationDeg,
+        spacingFactor,
       },
       style: {
-        stroke: s.color ?? "#000000", // use current color
-        fontSize: this._fontSizeFrom(s), // derived from width slider
+        // renderer uses s.stroke || s.fill for color and style.fontSize
+        stroke: color,
+        fill: color,
+        fontSize,
       },
       layer: maxLayer + 1,
-    });
+    }));
 
-    console.log("Adding watermark object:", watermarkObject);
-
-    s.addObject(watermarkObject);
-
-    // reset per-placement state
-    this.drawing = false;
-    this.currPos = null;
-    this.text = null; // ask again next time
-
+    this._endEditing(engine);
     engine.renderAllObjects();
   }
 
-  // ---------------- Events ----------------
-  onMouseDown(event, pos, engine) {
-    console.log("Watermark mousedown:", { pos, hasEngine: !!engine });
-
-    // Ask text if not set for this placement
-    if (!this.text) {
-      const v = window.prompt("Enter watermark text:", this.lastText);
-      if (v === null || v.trim() === "") {
-        // canceled or empty => abort
-        console.log("Text input canceled or empty");
-        engine.renderAllObjects();
-        return;
-      }
-      this.text = v;
-      this.lastText = v;
-      console.log("Set watermark text:", this.text);
-    }
-
-    this.drawing = true;
-    this.currPos = pos; // remember cursor even if onMouseUp has no pos
-    this._composePreview(engine);
-  }
-
-  onMouseMove(event, pos, engine) {
-    if (!this.drawing) return;
-    this.currPos = pos;
-    this._composePreview(engine);
-  }
-
-  onMouseUp(event, pos, engine) {
-    if (!this.drawing) return;
-    console.log("Watermark mouseup:", {
-      pos,
-      currPos: this.currPos,
-      shiftKey: event?.shiftKey,
-    });
-
-    // FIXED: Always use currPos (from mousedown/mousemove) instead of mouseup pos
-    // The mouseup pos seems to have coordinate transformation issues
-    const target = this.currPos; // Use the position we tracked during preview
-    const tiled = !!(event && event.shiftKey); // Shift+Click => tiled
-    this._commit(engine, target, tiled);
-  }
-
-  onKeyDown(event, engine) {
-    if (!event) return;
-    // Optional quick changes:
-    if (event.key.toLowerCase() === "o") {
-      const v = parseFloat(
-        window.prompt("Opacity (0..1):", String(this.opacity))
-      );
-      if (!Number.isNaN(v) && v >= 0 && v <= 1) {
-        this.opacity = v;
-        console.log("Changed opacity to:", this.opacity);
-      }
-      if (this.drawing) this._composePreview(engine);
-    }
-    if (event.key.toLowerCase() === "r") {
-      const v = parseFloat(
-        window.prompt("Rotation (deg) for tiled:", String(this.rotationDeg))
-      );
-      if (!Number.isNaN(v)) {
-        this.rotationDeg = v;
-        console.log("Changed rotation to:", this.rotationDeg);
-      }
-    }
-  }
-
-  onDeactivate(engine) {
-    if (!this.drawing) return;
-    console.log("Watermark tool deactivated");
-    this.drawing = false;
-    this.currPos = null;
+  _cancel(engine) {
+    this._endEditing(engine);
     engine.renderAllObjects();
   }
 
-  onBlur(engine) {
-    this.onDeactivate(engine);
+  _endEditing(engine) {
+    this.editing = false;
+    this.pos = null;
+    this.text = "";
+    this._destroyInput();
   }
+
+  // ---- events ----
+  onMouseDown(e, pos, engine) {
+    // If we're already typing, clicking elsewhere should COMMIT first.
+    if (this.editing) {
+      if (this.text.trim()) this._commit(engine);
+      else this._cancel(engine);
+    }
+
+    // Start a new caret (no default wording)
+    this._ensureInput(engine);
+    this.editing = true;
+    this.pos = pos;
+    this.text = "";                 // keep empty until user types
+    this.input.value = "";
+    this._positionInput(engine);
+    this.input.focus();
+    this.input.setSelectionRange(0, 0);
+    this._composePreview(engine);   // paints nothing (caret only)
+  }
+
+  onMouseMove(e, pos, engine) {
+    if (!this.editing) return;
+    this.pos = pos;
+    this._composePreview(engine);
+  }
+
+  onMouseUp(e, pos, engine) {
+    // commit is via Enter; clicking elsewhere handled in next mousedown
+  }
+
+  onKeyDown(e, engine) {
+    if (!this.editing) return;
+    if (e.key === "Escape") this._cancel(engine);
+  }
+
+  onDeactivate(engine) { if (this.editing) this._endEditing(engine); }
+  onBlur(engine)       { if (this.editing) this._endEditing(engine); }
 }
+
+export default WatermarkTool;

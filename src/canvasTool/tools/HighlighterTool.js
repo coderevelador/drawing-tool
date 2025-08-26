@@ -1,3 +1,4 @@
+// src/canvasTool/tools/HighlighterTool.js
 import { BaseTool } from "./BaseTool";
 import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
@@ -24,6 +25,50 @@ export class HighlighterTool extends BaseTool {
     },
   ];
 
+  static defaultsPanel = {
+    fields: [
+      {
+        group: "Ink",
+        label: "Color",
+        type: "color",
+        path: "style.stroke",
+        default: "#ffff00",
+      },
+      {
+        group: "Ink",
+        label: "Width",
+        type: "number",
+        path: "style.lineWidth",
+        default: 12,
+        min: 2,
+        max: 64,
+        step: 1,
+      },
+      {
+        group: "Ink",
+        label: "Opacity",
+        type: "range",
+        path: "style.opacity",
+        default: 0.35,
+        min: 0.05,
+        max: 1,
+        step: 0.05,
+      },
+      {
+        group: "Ink",
+        label: "Cap",
+        type: "select",
+        path: "style.lineCap",
+        default: "round",
+        options: [
+          { label: "Butt", value: "butt" },
+          { label: "Round", value: "round" },
+          { label: "Square", value: "square" },
+        ],
+      },
+    ],
+  };
+
   constructor() {
     super();
     this.name = "highlighter";
@@ -31,34 +76,50 @@ export class HighlighterTool extends BaseTool {
     this.drawing = false;
     this.points = [];
 
+    // offscreen buffer for silky preview
     this.buffer = null;
     this.bctx = null;
 
+    // “locked” stroke for the current gesture
     this.lockedStroke = null;
     this.lockedWidth = null;
+    this.lockedOpacity = null;
+    this.lockedComposite = null;
 
-    this.opacity = 0.25;
-    this.composite = "multiply";
-    this.minMove = 0.6; // was ~1.8; smaller -> fewer gaps
+    // sensible defaults (used if not present in tool defaults)
+    this.defaultOpacity = 0.25;
+    this.defaultComposite = "multiply";
+
+    // motion / smoothing
+    this.minMove = 0.6; // smaller => denser sampling, fewer gaps
   }
 
   // ---------- helpers ----------
+  _store(engine) {
+    return engine?.store && typeof engine.store.getState === "function"
+      ? engine.store
+      : useCanvasStore;
+  }
+
   _ensureBuffer(engine) {
+    const src = engine.canvas || engine.ctx?.canvas;
+    const W = src?.width ?? engine.width ?? 0;
+    const H = src?.height ?? engine.height ?? 0;
+
     if (!this.buffer) {
-      const c = document.createElement("canvas");
-      const w = engine.canvas?.width ?? engine.width ?? 0;
-      const h = engine.canvas?.height ?? engine.height ?? 0;
-      c.width = w;
-      c.height = h;
-      this.buffer = c;
-      this.bctx = c.getContext("2d");
+      this.buffer = document.createElement("canvas");
+      this.bctx = this.buffer.getContext("2d");
+    }
+    if (this.buffer.width !== W || this.buffer.height !== H) {
+      this.buffer.width = W;
+      this.buffer.height = H;
+      this.bctx.clearRect(0, 0, W, H);
     }
   }
 
   _clearBuffer() {
-    if (this.bctx && this.buffer) {
+    if (this.bctx && this.buffer)
       this.bctx.clearRect(0, 0, this.buffer.width, this.buffer.height);
-    }
   }
 
   _dist(a, b) {
@@ -69,15 +130,16 @@ export class HighlighterTool extends BaseTool {
 
   _strokeSetup(ctx) {
     ctx.save();
-    ctx.globalAlpha = this.opacity;
-    ctx.globalCompositeOperation = this.composite;
+    ctx.globalAlpha = this.lockedOpacity ?? this.defaultOpacity;
+    ctx.globalCompositeOperation =
+      this.lockedComposite ?? this.defaultComposite;
     ctx.strokeStyle = this.lockedStroke ?? "#ffeb3b";
     ctx.lineWidth = Math.max(2, this.lockedWidth ?? 10);
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
   }
 
-  // Draw the newest segment smoothly into buffer
+  // Draw newest segment smoothly into buffer
   _drawToBuffer() {
     const pts = this.points;
     const n = pts.length;
@@ -108,8 +170,7 @@ export class HighlighterTool extends BaseTool {
     ctx.beginPath();
     ctx.moveTo(m0x, m0y);
     ctx.quadraticCurveTo(p0.x, p0.y, m1x, m1y);
-
-    // tiny tail to the actual point to avoid visual gaps
+    // tiny tail to actual point to avoid hairline gaps
     ctx.lineTo(p1.x, p1.y);
     ctx.stroke();
     ctx.restore();
@@ -127,21 +188,20 @@ export class HighlighterTool extends BaseTool {
       return;
     }
 
-    const storeRef = useCanvasStore;
-    const state = storeRef.getState();
-    const maxLayer = state.objects.length
-      ? Math.max(...state.objects.map((o) => o.layer))
+    const store = useCanvasStore.getState();
+    const maxLayer = store.objects.length
+      ? Math.max(...store.objects.map((o) => o.layer || 0))
       : 0;
 
-    state.addObject(
+    store.addObject(
       new CanvasObject({
         type: "highlighter",
         data: { points: this.points.slice() },
         style: {
-          stroke: this.lockedStroke ?? state.color,
-          lineWidth: this.lockedWidth ?? Math.max(8, state.lineWidth),
-          opacity: this.opacity,
-          composite: this.composite,
+          stroke: this.lockedStroke ?? store.color,
+          lineWidth: this.lockedWidth ?? Math.max(8, store.lineWidth),
+          opacity: this.lockedOpacity ?? this.defaultOpacity,
+          composite: this.lockedComposite ?? this.defaultComposite,
         },
         layer: maxLayer + 1,
       })
@@ -156,6 +216,8 @@ export class HighlighterTool extends BaseTool {
     this.points = [];
     this.lockedStroke = null;
     this.lockedWidth = null;
+    this.lockedOpacity = null;
+    this.lockedComposite = null;
     this._clearBuffer();
     this.buffer = null;
     this.bctx = null;
@@ -163,33 +225,27 @@ export class HighlighterTool extends BaseTool {
 
   // ---------- events ----------
   onMouseDown(event, pos, engine) {
-    // lock style same as other tools
-    const storeRef =
-      engine?.store && typeof engine.store.getState === "function"
-        ? engine.store
-        : useCanvasStore;
-    let opts;
-    try {
-      opts =
-        typeof super.getToolOptions === "function"
-          ? super.getToolOptions(storeRef)
-          : {
-              color: storeRef.getState().color,
-              lineWidth: storeRef.getState().lineWidth,
-            };
-    } catch {
-      const s = storeRef.getState ? storeRef.getState() : {};
-      opts = { color: s.color ?? "#ffeb3b", lineWidth: s.lineWidth ?? 10 };
-    }
+    // lock current defaults for this stroke
+    const storeRef = this._store(engine);
+    const s = storeRef.getState ? storeRef.getState() : {};
+    const td = (s.toolDefaults && s.toolDefaults[this.name]) || {};
+    const st = td.style || {};
 
-    this.lockedStroke = opts.color;
-    this.lockedWidth = Math.max(8, opts.lineWidth * 2);
+    this.lockedStroke = st.stroke ?? s.color ?? "#ffeb3b";
+    this.lockedWidth = Math.max(
+      2,
+      Number(st.lineWidth ?? (s.lineWidth ?? 10) * 2)
+    );
+    this.lockedOpacity =
+      typeof st.opacity === "number" ? st.opacity : this.defaultOpacity;
+    this.lockedComposite = st.composite || this.defaultComposite;
 
     this._ensureBuffer(engine);
 
     this.drawing = true;
     this.points = [pos];
-    // seed stroke
+
+    // seed preview (noop for first point but safe)
     this._drawToBuffer();
     this._compose(engine);
   }
@@ -240,24 +296,21 @@ export class HighlighterTool extends BaseTool {
 
   onKeyDown(event, engine) {
     if (!event) return;
-    if (event.key.toLowerCase() === "o") {
-      const v = parseFloat(
-        window.prompt("Highlighter opacity (0..1):", String(this.opacity))
-      );
-      if (!Number.isNaN(v) && v >= 0 && v <= 1) this.opacity = v;
-    }
-    if (event.key.toLowerCase() === "m") {
-      this.composite =
-        this.composite === "multiply" ? "source-over" : "multiply";
-    }
     if (event.key === "Escape" && this.drawing) {
       this._reset(engine);
       engine.renderAllObjects();
     }
+    // Optional quick toggles:
+    if (event.key.toLowerCase() === "m") {
+      this.lockedComposite =
+        (this.lockedComposite || this.defaultComposite) === "multiply"
+          ? "source-over"
+          : "multiply";
+      this._compose(engine);
+    }
   }
 
   onDeactivate(engine) {
-    // finalize even if the engine didn't send mouseup
     if (this.drawing) this._commit(engine);
   }
 
@@ -265,3 +318,5 @@ export class HighlighterTool extends BaseTool {
     if (this.drawing) this._commit(engine);
   }
 }
+
+export default HighlighterTool;

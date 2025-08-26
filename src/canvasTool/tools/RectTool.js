@@ -32,6 +32,80 @@ export class RectTool extends BaseTool {
     },
   ];
 
+  static defaultsPanel = {
+    // optional: hide the dock for this tool
+    hideDock: false,
+    // optional per-tool toggle persisted at toolDefaults.rect.__enabled
+    hasEnableToggle: true,
+    fields: [
+      { group: "Style", label: "Stroke", type: "color", path: "style.stroke" },
+      {
+        group: "Style",
+        label: "Width",
+        type: "number",
+        path: "style.lineWidth",
+        min: 1,
+        step: 1,
+      },
+      {
+        group: "Style",
+        label: "Line type",
+        type: "select",
+        path: "style.lineType",
+        options: ["solid", "dashed", "dotted", "cloud"],
+      },
+
+      // fill block
+      {
+        group: "Fill",
+        label: "Filled",
+        type: "checkbox",
+        path: "style.fillEnabled",
+      },
+      { group: "Fill", label: "Fill color", type: "color", path: "style.fill" },
+      {
+        group: "Fill",
+        label: "Fill opacity",
+        type: "range",
+        path: "style.fillOpacity",
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+
+      // stroke opacity
+      {
+        group: "FX",
+        label: "Stroke opacity",
+        type: "range",
+        path: "style.opacity",
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+
+      // only show when lineType === 'cloud'
+      {
+        group: "Cloud",
+        label: "Amplitude",
+        type: "number",
+        path: "style.cloudAmplitude",
+        min: 2,
+        step: 1,
+        showIf: (d) => d?.style?.lineType === "cloud",
+      },
+      {
+        group: "Cloud",
+        label: "Step",
+        type: "number",
+        path: "style.cloudStep",
+        min: 2,
+        step: 1,
+        showIf: (d) => d?.style?.lineType === "cloud",
+      },
+    ],
+  };
+
   constructor() {
     super();
     this.name = "rect"; // MUST match toolDefaults key
