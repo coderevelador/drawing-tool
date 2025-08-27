@@ -29,6 +29,56 @@ function applyCommon(ctx, style = {}) {
   return () => ctx.restore();
 }
 
+function wrapLines(ctx, text, maxWidth, fontSize) {
+  const out = [];
+  const lh = Math.round((fontSize ?? 14) * 1.25);
+
+  for (const raw of (text || "").split("\n")) {
+    let line = "";
+    for (const word of raw.split(" ")) {
+      const test = line ? line + " " + word : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        out.push(line);
+        line = word;
+      } else line = test;
+    }
+    out.push(line);
+  }
+  return { lines: out, lineHeight: lh };
+}
+function drawArrowHeadAtTip(ctx, tip, toward, style) {
+  const head = Number(
+    style.headSize ?? Math.max(10, (style.lineWidth ?? 2) * 3)
+  );
+  const vx = toward.x - tip.x,
+    vy = toward.y - tip.y;
+  const len = Math.hypot(vx, vy) || 1;
+  const ux = vx / len,
+    uy = vy / len;
+  const left = {
+    x: tip.x + ux * head - uy * (head * 0.5),
+    y: tip.y + uy * head + ux * (head * 0.5),
+  };
+  const right = {
+    x: tip.x + ux * head + uy * (head * 0.5),
+    y: tip.y + uy * head - ux * (head * 0.5),
+  };
+  ctx.beginPath();
+  if (style.arrowClosed) {
+    ctx.moveTo(left.x, left.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.lineTo(right.x, right.y);
+    ctx.closePath();
+    if (style.arrowFilled) ctx.fill();
+    ctx.stroke();
+  } else {
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(left.x, left.y);
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(right.x, right.y);
+    ctx.stroke();
+  }
+}
 function fillIfNeeded(ctx, style) {
   if (!style) return;
   const fillEnabled =
@@ -671,6 +721,72 @@ export function renderObject(ctx, object) {
       }
 
       ctx.restore();
+      break;
+    }
+
+    case "calloutArrow": {
+      // local aliases — avoid bare `data` or `style`
+      const d = object.data || {};
+      const s = object.style || {};
+
+      const rect = d.rect || { x: 0, y: 0, width: 0, height: 0 };
+      const anchor = d.anchor || { x: 0, y: 0 }; // arrow tip
+      const elbow = d.elbow || anchor; // elbow point
+      const attach = d.attach || elbow; // where leader touches box
+      const text = d.text || "";
+      const padding = d.padding ?? 8;
+      const radius = Math.max(0, s.cornerRadius ?? 4);
+
+      // 1) Box (rounded; no external rr() dependency)
+      const x = rect.x,
+        y = rect.y,
+        w = rect.width,
+        h = rect.height;
+      const r = Math.min(radius, Math.min(w, h) / 2);
+
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(x, y, w, h, r);
+      } else {
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+      fillIfNeeded(ctx, s);
+      ctx.stroke();
+
+      // 2) Leader: tip -> elbow -> attach
+      ctx.beginPath();
+      ctx.moveTo(anchor.x, anchor.y);
+      ctx.lineTo(elbow.x, elbow.y);
+      ctx.lineTo(attach.x, attach.y);
+      ctx.stroke();
+
+      // arrow head at the tip
+      drawArrowHeadAtTip(ctx, anchor, elbow, s);
+
+      // 3) Text inside the box (simple wrap)
+      const fontSize = Number(s.fontSize ?? 14);
+      const fontFamily = s.fontFamily || "Arial";
+      const fontWeight = s.fontWeight || "500";
+      ctx.fillStyle = s.textColor || s.stroke || "#000";
+      ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+      ctx.textBaseline = "top";
+      ctx.textAlign = "left";
+
+      const maxW = Math.max(0, w - padding * 2);
+      const { lines, lineHeight } = wrapLines(ctx, text, maxW, fontSize);
+
+      let yy = y + padding;
+      for (const ln of lines) {
+        ctx.fillText(ln, x + padding, yy);
+        yy += lineHeight;
+        if (yy > y + h - padding) break;
+      }
+
       break;
     }
 

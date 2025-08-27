@@ -55,6 +55,27 @@ export const useCanvasStore = create((set, get) => ({
         opacity: 0.4,
       },
     },
+    calloutArrow: {
+      style: {
+        stroke: "#ff0000",
+        lineType: "solid",
+        lineWidth: 2,
+        opacity: 1,
+        fillEnabled: false,
+        fill: "#ffffff",
+        fillOpacity: 1,
+        cornerRadius: 4,
+        // text
+        textColor: "#ff0000",
+        fontFamily: "Arial",
+        fontSize: 14,
+        fontWeight: "500",
+        // arrow head
+        headSize: 12,
+        arrowClosed: true,
+        arrowFilled: false,
+      },
+    },
   },
 
   setToolDefaults: (tool, patch) =>

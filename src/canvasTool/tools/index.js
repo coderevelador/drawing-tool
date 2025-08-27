@@ -11,6 +11,8 @@ import { TextTool } from "./TextTool";
 import { HighlighterTool } from "./HighlighterTool";
 import { StickyNoteTool } from "./StickyNoteTool";
 import { SchemaRegistry } from "../utils/schemaRegistry";
+import { CalloutArrowTool } from "./CalloutArrowTool";
+
 
 export const toolRegistry = {
   pencil: new PencilTool(),
@@ -25,6 +27,7 @@ export const toolRegistry = {
   text: new TextTool(),
   highlighter: new HighlighterTool(),
   stickynote: new StickyNoteTool(),
+  calloutArrow: new CalloutArrowTool(),
 };
 
 SchemaRegistry.registerFromTools(toolRegistry);
@@ -42,4 +45,5 @@ export const toolList = [
   { name: "text", icon: "🅣", label: "Text" },
   { name: "highlighter", icon: "🖍️", label: "Highlighter" },
   { name: "stickynote", icon: "🗒️", label: "Sticky" },
+  { name: "calloutArrow", icon: "🗨️", label: "Callout Arrow" },
 ];

@@ -38,19 +38,19 @@ const HistoryControls = ({
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
-          <span className="text-gray-600 text-lg">🕒</span>
+          {/* <span className="text-gray-600 text-lg">🕒</span>
           <h3 className="text-lg font-semibold text-gray-800">
             Processing History ({history.length})
-          </h3>
+          </h3> */}
         </div>
         
         <div className="flex items-center space-x-2">
-          <button
+          {/* <button
             onClick={() => setIsExpanded(!isExpanded)}
             className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors"
           >
             {isExpanded ? 'Collapse' : 'Expand'}
-          </button>
+          </button> */}
           
           {history.length > 0 && (
             <>

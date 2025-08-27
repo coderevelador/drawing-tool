@@ -329,7 +329,7 @@ export function mountInspectorDock(engine, opts = {}) {
   header.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px">
       <span style="opacity:.7;letter-spacing:2px;">⋮⋮</span>
-      <strong>Objects</strong>
+      <strong>Navigator</strong>
     </div>
     <div style="display:flex;gap:6px;align-items:center">
       <label style="display:flex;gap:6px;align-items:center;cursor:pointer">

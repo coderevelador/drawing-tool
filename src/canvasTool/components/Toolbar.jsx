@@ -74,7 +74,7 @@ const Toolbar = () => {
       </div>
 
       {/* Options */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
           Color:
           <input
@@ -99,7 +99,7 @@ const Toolbar = () => {
             {lineWidth}px
           </span>
         </label>
-      </div>
+      </div> */}
 
       {/* History Controls */}
       <HistoryControls />
