@@ -248,11 +248,20 @@ export class CanvasEngine {
     const { objects } = this.store.getState();
     this.ctx.clearRect(0, 0, this.width, this.height);
 
-    // Re-render all objects (like rectangles) from the state
-    objects
-      .sort((a, b) => a.layer - b.layer)
-      .forEach((obj) => renderObject(this.ctx, obj));
+    const ordered = [...objects].sort((a, b) => {
+      const la = Number.isFinite(a.layer) ? a.layer : 0;
+      const lb = Number.isFinite(b.layer) ? b.layer : 0;
+      return la - lb;
+    });
+
+    const base = [];
+    const blurs = [];
+    for (const o of ordered) (o.type === "blur" ? blurs : base).push(o);
+
+    base.forEach((o) => renderObject(this.ctx, o));
+    blurs.forEach((o) => renderObject(this.ctx, o)); // <— always on top
 
     this.redrawCallouts();
   }
+  
 }

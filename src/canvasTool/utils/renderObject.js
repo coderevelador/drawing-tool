@@ -789,6 +789,100 @@ export function renderObject(ctx, object) {
 
       break;
     }
+    case "blur": {
+      const d = object.data || {};
+      const s = object.style || {};
+      const x = d.x || 0;
+      const y = d.y || 0;
+      const w = Math.max(1, d.width || 1);
+      const h = Math.max(1, d.height || 1);
+
+      const radius = Math.max(0, s.cornerRadius ?? 6);
+      const mode = s.mode || "pixelate";
+      const pixelSize = Math.max(2, Math.floor(s.pixelSize ?? 16));
+      const blurRadius = Math.max(1, Math.floor(s.blurRadius ?? 10));
+      const stroke = s.stroke;
+      const lineWidth = Math.max(0, s.lineWidth ?? 0);
+      const opacity = typeof s.opacity === "number" ? s.opacity : 1;
+      const redactFill = s.fill || "#000";
+
+      // helper to draw rounded clip
+      const clipRounded = () => {
+        if (ctx.roundRect) {
+          ctx.beginPath();
+          ctx.roundRect(x, y, w, h, Math.min(radius, Math.min(w, h) / 2));
+          ctx.clip();
+        } else {
+          // fallback: simple rect clip
+          ctx.beginPath();
+          ctx.rect(x, y, w, h);
+          ctx.clip();
+        }
+      };
+
+      // We sample from current canvas frame to hide underlying graphics.
+      // To avoid feedback, copy the source region to an offscreen first.
+      const src = document.createElement("canvas");
+      src.width = w;
+      src.height = h;
+      const sctx = src.getContext("2d");
+
+      try {
+        sctx.drawImage(ctx.canvas, x, y, w, h, 0, 0, w, h);
+      } catch (err) {
+        // If cross-origin or other issues, fallback to redact
+      }
+
+      ctx.save();
+      ctx.globalAlpha = opacity;
+
+      if (mode === "pixelate") {
+        // downscale then upscale with smoothing off
+        const sw = Math.max(1, Math.floor(w / pixelSize));
+        const sh = Math.max(1, Math.floor(h / pixelSize));
+        const tiny = document.createElement("canvas");
+        tiny.width = sw;
+        tiny.height = sh;
+        const tctx = tiny.getContext("2d");
+        tctx.imageSmoothingEnabled = true;
+        tctx.drawImage(src, 0, 0, w, h, 0, 0, sw, sh);
+
+        clipRounded();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(tiny, 0, 0, sw, sh, x, y, w, h);
+      } else if (mode === "blur") {
+        clipRounded();
+        ctx.filter = `blur(${blurRadius}px)`;
+        ctx.drawImage(src, 0, 0, w, h, x, y, w, h);
+        ctx.filter = "none";
+      } else {
+        // redact (solid)
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(x, y, w, h, Math.min(radius, Math.min(w, h) / 2));
+        } else {
+          ctx.rect(x, y, w, h);
+        }
+        ctx.fillStyle = redactFill;
+        ctx.fill();
+      }
+
+      // optional border
+      if (lineWidth > 0 && stroke) {
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(x, y, w, h, Math.min(radius, Math.min(w, h) / 2));
+        } else {
+          ctx.rect(x, y, w, h);
+        }
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = stroke;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+      break;
+    }
 
     default: {
       // Fallback: draw a rect if bbox exists
