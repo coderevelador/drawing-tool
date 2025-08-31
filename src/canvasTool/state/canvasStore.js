@@ -6,6 +6,11 @@ export const useCanvasStore = create((set, get) => ({
   history: [],
   redoStack: [],
 
+  selectedIds: [],
+
+  setSelectedIds: (ids) =>
+    set({ selectedIds: Array.isArray(ids) ? ids : ids != null ? [ids] : [] }),
+
   // Tool state
   currentTool: "pencil",
   color: "#000000",
@@ -85,6 +90,112 @@ export const useCanvasStore = create((set, get) => ({
     color: "#e0e0e0", // thin line color
     boldColor: "#c0c0c0", // bold line color
     alpha: 0.6, // grid opacity
+  },
+
+  _selectedIdSet() {
+    const s = get();
+    // prefer explicit selectedIds; fallback to objects[].selected
+    const list =
+      s.selectedIds && s.selectedIds.length
+        ? s.selectedIds
+        : s.objects.filter((o) => o.selected).map((o) => o.id);
+    return new Set(list);
+  },
+
+  /** Utility: split into draw groups & sort by current layer */
+  _groupsSorted() {
+    const { objects } = get();
+    const base = objects
+      .filter((o) => o.type !== "blur")
+      .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+    const blurs = objects
+      .filter((o) => o.type === "blur")
+      .sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+    return { base, blurs };
+  },
+
+  /** Utility: reassign compact, monotonic layers within group */
+  _reindexLayers(arr) {
+    arr.forEach((o, i) => {
+      o.layer = i;
+    });
+  },
+
+  /** Core reorder: op = "front" | "back" | "forward" | "backward" */
+  _reorder(op) {
+    const s = get();
+    const sel = s._selectedIdSet();
+    if (!sel.size) return;
+
+    const stepMove = (arr, dir) => {
+      // dir = +1 (forward) or -1 (backward)
+      if (dir > 0) {
+        for (let i = arr.length - 2; i >= 0; i--) {
+          if (sel.has(arr[i].id) && !sel.has(arr[i + 1].id)) {
+            const t = arr[i];
+            arr[i] = arr[i + 1];
+            arr[i + 1] = t;
+          }
+        }
+      } else {
+        for (let i = 1; i < arr.length; i++) {
+          if (sel.has(arr[i].id) && !sel.has(arr[i - 1].id)) {
+            const t = arr[i];
+            arr[i] = arr[i - 1];
+            arr[i - 1] = t;
+          }
+        }
+      }
+    };
+
+    const blockMove = (arr, toFront) => {
+      const selected = arr.filter((o) => sel.has(o.id));
+      const others = arr.filter((o) => !sel.has(o.id));
+      return toFront ? [...others, ...selected] : [...selected, ...others];
+    };
+
+    const { base, blurs } = s._groupsSorted();
+
+    switch (op) {
+      case "forward":
+        stepMove(base, +1);
+        stepMove(blurs, +1);
+        break;
+      case "backward":
+        stepMove(base, -1);
+        stepMove(blurs, -1);
+        break;
+      case "front":
+        const nb = blockMove(base, true);
+        const nb2 = blockMove(blurs, true);
+        base.splice(0, base.length, ...nb);
+        blurs.splice(0, blurs.length, ...nb2);
+        break;
+      case "back":
+        const pb = blockMove(base, false);
+        const pb2 = blockMove(blurs, false);
+        base.splice(0, base.length, ...pb);
+        blurs.splice(0, blurs.length, ...pb2);
+        break;
+    }
+
+    s._reindexLayers(base);
+    s._reindexLayers(blurs);
+
+    set({ objects: [...base, ...blurs] });
+  },
+
+  bringForward() {
+    get()._reorder("forward");
+  },
+  sendBackward() {
+    get()._reorder("backward");
+  },
+  bringToFront() {
+    get()._reorder("front");
+  },
+  sendToBack() {
+    get()._reorder("back");
   },
 
   toggleGrid: () => set((s) => ({ grid: { ...s.grid, show: !s.grid.show } })),

@@ -8,17 +8,33 @@ import { SchemaRegistry, dget, dset } from "../utils/schemaRegistry";
 export function mountInspectorDock(engine, opts = {}) {
   const startPinnedRight = opts.startPinnedRight ?? true;
 
-  // -------- store helpers ----------
-  const getObjects = () => useCanvasStore.getState().objects || [];
+  // ---------- selection (index local to this dock) ----------
+  let selectedIdx = -1;
+
+  // ---------- store helpers ----------
+  const getState = () => useCanvasStore.getState();
+  const getObjects = () => getState().objects || [];
+
   const setObjects = (next) => {
-    const s = useCanvasStore.getState();
-    if (typeof s.setState === "function") s.setState({ objects: next });
-    else if (typeof useCanvasStore.setState === "function")
+    // prefer Zustand's setState via store instance
+    if (typeof useCanvasStore.setState === "function") {
       useCanvasStore.setState({ objects: next });
+    } else if (typeof getState().setState === "function") {
+      getState().setState({ objects: next });
+    }
   };
 
-  // ---------- selection ----------
-  let selectedIdx = -1;
+  /** Push the current UI selection (by index) into the global store */
+  const setSelectedFromIndex = (i) => {
+    const objs = getObjects();
+    const id = i >= 0 && objs[i] ? objs[i].id : null;
+    const api = getState();
+    if (typeof api.setSelectedIds === "function") {
+      api.setSelectedIds(id ? [id] : []);
+    } else if (typeof useCanvasStore.setState === "function") {
+      useCanvasStore.setState({ selectedIds: id ? [id] : [] });
+    }
+  };
 
   // ---------- helpers: cloning ----------
   const nextCopyName = (name, fallbackType) => {
@@ -27,17 +43,12 @@ export function mountInspectorDock(engine, opts = {}) {
     if (!m) return `${base} (copy)`;
     const stem = (m[1] || base).trim();
     const n = m[2] ? parseInt(m[2], 10) + 1 : 2;
-    // If there was already "(copy)" with/without number, increment; else add "(copy)"
-    return m[2] || /copy\)$/i.test(base)
-      ? `${stem} (copy ${n})`
-      : `${stem} (copy)`;
+    return m[2] || /copy\)$/i.test(base) ? `${stem} (copy ${n})` : `${stem} (copy)`;
   };
 
   const cloneWithOffset = (src, dx = 12, dy = 12) => {
     const c = JSON.parse(JSON.stringify(src));
-    // id: make unique if present
     if (c.id != null) c.id = `${c.id}_copy_${Date.now()}`;
-    // name
     c.name = nextCopyName(src.name, src.type);
 
     if (c.data) {
@@ -51,10 +62,7 @@ export function mountInspectorDock(engine, opts = {}) {
       if (typeof d.y2 === "number") d.y2 += dy;
 
       if (Array.isArray(d.points)) {
-        d.points = d.points.map((p) => ({
-          x: (p.x || 0) + dx,
-          y: (p.y || 0) + dy,
-        }));
+        d.points = d.points.map((p) => ({ x: (p.x || 0) + dx, y: (p.y || 0) + dy }));
       }
     }
     return c;
@@ -69,6 +77,7 @@ export function mountInspectorDock(engine, opts = {}) {
     arr.splice(idx + 1, 0, dup);
     setObjects(arr);
     selectedIdx = idx + 1;
+    setSelectedFromIndex(selectedIdx);
     engine.renderAllObjects?.();
     renderList();
     renderInspector();
@@ -104,15 +113,7 @@ export function mountInspectorDock(engine, opts = {}) {
         w = +d.width || 0,
         h = +d.height || 0;
       ctx.beginPath();
-      ctx.ellipse(
-        x + w / 2,
-        y + h / 2,
-        Math.abs(w / 2),
-        Math.abs(h / 2),
-        0,
-        0,
-        Math.PI * 2
-      );
+      ctx.ellipse(x + w / 2, y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2);
     };
     const pathLine = () => {
       const x1 = d.x1 ?? d.x ?? 0,
@@ -275,12 +276,7 @@ export function mountInspectorDock(engine, opts = {}) {
 
       default: {
         const b = getBounds(obj);
-        return (
-          pos.x >= b.x &&
-          pos.x <= b.x + b.w &&
-          pos.y >= b.y &&
-          pos.y <= b.y + b.h
-        );
+        return pos.x >= b.x && pos.x <= b.x + b.w && pos.y >= b.y && pos.y <= b.y + b.h;
       }
     }
   };
@@ -451,6 +447,7 @@ export function mountInspectorDock(engine, opts = {}) {
       });
       selBtn.onclick = () => {
         selectedIdx = idx;
+        setSelectedFromIndex(selectedIdx);
         repaintWithSelection();
         renderList();
         renderInspector();
@@ -519,42 +516,13 @@ export function mountInspectorDock(engine, opts = {}) {
           { group: "Position", label: "x", type: "number", path: "data.x" },
           { group: "Position", label: "y", type: "number", path: "data.y" },
           { group: "Size", label: "width", type: "number", path: "data.width" },
-          {
-            group: "Size",
-            label: "height",
-            type: "number",
-            path: "data.height",
-          },
+          { group: "Size", label: "height", type: "number", path: "data.height" },
 
           // Line-like endpoints if present
-          {
-            group: "Position",
-            label: "x1",
-            type: "number",
-            path: "data.x1",
-            showIf: (o) => o?.data?.x1 != null,
-          },
-          {
-            group: "Position",
-            label: "y1",
-            type: "number",
-            path: "data.y1",
-            showIf: (o) => o?.data?.y1 != null,
-          },
-          {
-            group: "Position",
-            label: "x2",
-            type: "number",
-            path: "data.x2",
-            showIf: (o) => o?.data?.x2 != null,
-          },
-          {
-            group: "Position",
-            label: "y2",
-            type: "number",
-            path: "data.y2",
-            showIf: (o) => o?.data?.y2 != null,
-          },
+          { group: "Position", label: "x1", type: "number", path: "data.x1", showIf: (o) => o?.data?.x1 != null },
+          { group: "Position", label: "y1", type: "number", path: "data.y1", showIf: (o) => o?.data?.y1 != null },
+          { group: "Position", label: "x2", type: "number", path: "data.x2", showIf: (o) => o?.data?.x2 != null },
+          { group: "Position", label: "y2", type: "number", path: "data.y2", showIf: (o) => o?.data?.y2 != null },
 
           // Poly-like
           {
@@ -564,92 +532,25 @@ export function mountInspectorDock(engine, opts = {}) {
             path: "data.points",
             showIf: (o) => Array.isArray(o?.data?.points),
             parse: (v) => {
-              try {
-                return JSON.parse(v);
-              } catch {
-                return [];
-              }
+              try { return JSON.parse(v); } catch { return []; }
             },
             format: (v) => JSON.stringify(v ?? [], null, 0),
           },
 
           // Style
-          {
-            group: "Style",
-            label: "Stroke",
-            type: "color",
-            path: "style.stroke",
-            showIf: (o) => o?.style?.stroke != null,
-          },
-          {
-            group: "Style",
-            label: "Fill",
-            type: "color",
-            path: "style.fill",
-            showIf: (o) => o?.style?.fill != null,
-          },
-          {
-            group: "Style",
-            label: "Width",
-            type: "number",
-            path: "style.lineWidth",
-            min: 1,
-            step: 1,
-            showIf: (o) => o?.style?.lineWidth != null,
-          },
-          {
-            group: "FX",
-            label: "Opacity",
-            type: "range",
-            path: "style.opacity",
-            min: 0,
-            max: 1,
-            step: 0.05,
-            showIf: (o) => o?.style?.opacity != null,
-          },
+          { group: "Style", label: "Stroke", type: "color", path: "style.stroke", showIf: (o) => o?.style?.stroke != null },
+          { group: "Style", label: "Fill", type: "color", path: "style.fill", showIf: (o) => o?.style?.fill != null },
+          { group: "Style", label: "Width", type: "number", path: "style.lineWidth", min: 1, step: 1, showIf: (o) => o?.style?.lineWidth != null },
+          { group: "FX", label: "Opacity", type: "range", path: "style.opacity", min: 0, max: 1, step: 0.05, showIf: (o) => o?.style?.opacity != null },
 
           // Arrow extras if present
-          {
-            group: "Options",
-            label: "Head size",
-            type: "number",
-            path: "style.headSize",
-            min: 2,
-            step: 1,
-            showIf: (o) => o?.style?.headSize != null,
-          },
-          {
-            group: "Options",
-            label: "Head type",
-            type: "select",
-            path: "style.headType",
-            options: ["triangle", "barb", "open"],
-            showIf: (o) => o?.style?.headType != null,
-          },
+          { group: "Options", label: "Head size", type: "number", path: "style.headSize", min: 2, step: 1, showIf: (o) => o?.style?.headSize != null },
+          { group: "Options", label: "Head type", type: "select", path: "style.headType", options: ["triangle", "barb", "open"], showIf: (o) => o?.style?.headType != null },
 
           // Text-like
-          {
-            group: "Text",
-            label: "Content",
-            type: "textarea",
-            path: "data.text",
-            showIf: (o) => o?.data?.text != null,
-          },
-          {
-            group: "Text",
-            label: "Font",
-            type: "text",
-            path: "style.font",
-            showIf: (o) => o?.style?.font != null,
-          },
-          {
-            group: "Text",
-            label: "Align",
-            type: "select",
-            path: "style.align",
-            options: ["left", "center", "right"],
-            showIf: (o) => o?.style?.align != null,
-          },
+          { group: "Text", label: "Content", type: "textarea", path: "data.text", showIf: (o) => o?.data?.text != null },
+          { group: "Text", label: "Font", type: "text", path: "style.font", showIf: (o) => o?.style?.font != null },
+          { group: "Text", label: "Align", type: "select", path: "style.align", options: ["left", "center", "right"], showIf: (o) => o?.style?.align != null },
         ],
       };
     }
@@ -680,17 +581,11 @@ export function mountInspectorDock(engine, opts = {}) {
     for (const [groupName, fields] of groups.entries()) {
       const title = document.createElement("div");
       title.textContent = groupName;
-      Object.assign(title.style, {
-        marginTop: "6px",
-        fontWeight: "700",
-        opacity: ".85",
-      });
+      Object.assign(title.style, { marginTop: "6px", fontWeight: "700", opacity: ".85" });
       container.appendChild(title);
 
       for (const f of fields) {
-        const current = f.format
-          ? f.format(dget(object, f.path))
-          : dget(object, f.path, "");
+        const current = f.format ? f.format(dget(object, f.path)) : dget(object, f.path, "");
         let input;
 
         switch (f.type) {
@@ -704,11 +599,7 @@ export function mountInspectorDock(engine, opts = {}) {
             input.oninput = () => {
               const v = input.value;
               const num = v === "" ? "" : Number(v);
-              dset(
-                object,
-                f.path,
-                v === "" ? "" : Number.isFinite(num) ? num : current
-              );
+              dset(object, f.path, v === "" ? "" : Number.isFinite(num) ? num : current);
               commit();
             };
             container.appendChild(mkRow(f.label, input));
@@ -718,10 +609,7 @@ export function mountInspectorDock(engine, opts = {}) {
             input = document.createElement("input");
             input.type = "text";
             input.value = current ?? "";
-            input.oninput = () => {
-              dset(object, f.path, input.value);
-              commit();
-            };
+            input.oninput = () => { dset(object, f.path, input.value); commit(); };
             container.appendChild(mkRow(f.label, input));
             break;
           }
@@ -745,10 +633,7 @@ export function mountInspectorDock(engine, opts = {}) {
             input.max = String(f.max ?? 1);
             input.step = String(f.step ?? 0.05);
             input.value = String(current ?? 1);
-            input.oninput = () => {
-              dset(object, f.path, Number(input.value));
-              commit();
-            };
+            input.oninput = () => { dset(object, f.path, Number(input.value)); commit(); };
             container.appendChild(mkRow(f.label, input));
             break;
           }
@@ -756,10 +641,7 @@ export function mountInspectorDock(engine, opts = {}) {
             input = document.createElement("input");
             input.type = "color";
             input.value = current || "#000000";
-            input.oninput = () => {
-              dset(object, f.path, input.value);
-              commit();
-            };
+            input.oninput = () => { dset(object, f.path, input.value); commit(); };
             break;
           }
           case "select": {
@@ -771,20 +653,14 @@ export function mountInspectorDock(engine, opts = {}) {
               input.appendChild(o);
             });
             input.value = current || (f.options?.[0] ?? "");
-            input.onchange = () => {
-              dset(object, f.path, input.value);
-              commit();
-            };
+            input.onchange = () => { dset(object, f.path, input.value); commit(); };
             break;
           }
           case "checkbox": {
             input = document.createElement("input");
             input.type = "checkbox";
             input.checked = !!current;
-            input.onchange = () => {
-              dset(object, f.path, !!input.checked);
-              commit();
-            };
+            input.onchange = () => { dset(object, f.path, !!input.checked); commit(); };
             break;
           }
           default:
@@ -797,11 +673,7 @@ export function mountInspectorDock(engine, opts = {}) {
 
     // actions: Clone + Delete
     const actions = document.createElement("div");
-    Object.assign(actions.style, {
-      display: "flex",
-      gap: "8px",
-      marginTop: "8px",
-    });
+    Object.assign(actions.style, { display: "flex", gap: "8px", marginTop: "8px" });
 
     const cloneSel = document.createElement("button");
     cloneSel.textContent = "Clone selected";
@@ -813,9 +685,7 @@ export function mountInspectorDock(engine, opts = {}) {
       padding: "6px 10px",
       cursor: "pointer",
     });
-    cloneSel.onclick = () => {
-      if (selectedIdx >= 0) cloneAtIndex(selectedIdx);
-    };
+    cloneSel.onclick = () => { if (selectedIdx >= 0) cloneAtIndex(selectedIdx); };
 
     const del = document.createElement("button");
     del.textContent = "Delete selected";
@@ -833,6 +703,7 @@ export function mountInspectorDock(engine, opts = {}) {
         arr.splice(selectedIdx, 1);
         setObjects(arr);
         selectedIdx = -1;
+        setSelectedFromIndex(selectedIdx);
         engine.renderAllObjects?.();
         renderList();
         renderInspector();
@@ -862,7 +733,8 @@ export function mountInspectorDock(engine, opts = {}) {
     renderInspector();
   });
 
-  // FIRST PAINT
+  // FIRST PAINT + initial empty selection sync
+  setSelectedFromIndex(selectedIdx);
   renderList();
   renderInspector();
 
@@ -904,6 +776,7 @@ export function mountInspectorDock(engine, opts = {}) {
     const hitIdx = pickTopIndexAt(pos);
     if (hitIdx !== -1 && hitIdx !== selectedIdx) {
       selectedIdx = hitIdx;
+      setSelectedFromIndex(selectedIdx);
       renderList();
       renderInspector();
       repaintWithSelection();

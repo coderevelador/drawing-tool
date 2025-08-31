@@ -13,7 +13,11 @@ const Toolbar = () => {
     setTool,
     setColor,
     setLineWidth,
-    objects, // ✅ include this
+    objects,
+    bringForward,
+    sendBackward,
+    bringToFront,
+    sendToBack,
   } = useCanvasStore();
 
   const handleClear = () => {
@@ -103,6 +107,13 @@ const Toolbar = () => {
 
       {/* History Controls */}
       <HistoryControls />
+
+      <div className="flex gap-2">
+  <button title="Bring to Front (Ctrl+Shift+])" onClick={()=>{ bringToFront();  canvasEngine.renderAllObjects(); canvasEngine.saveDrawingSnapshot(); }}>⤴️⤴️</button>
+  <button title="Bring Forward (Ctrl+])"      onClick={()=>{ bringForward();   canvasEngine.renderAllObjects(); canvasEngine.saveDrawingSnapshot(); }}>⤴️</button>
+  <button title="Send Backward (Ctrl+[)"      onClick={()=>{ sendBackward();   canvasEngine.renderAllObjects(); canvasEngine.saveDrawingSnapshot(); }}>⤵️</button>
+  <button title="Send to Back (Ctrl+Shift+[)" onClick={()=>{ sendToBack();     canvasEngine.renderAllObjects(); canvasEngine.saveDrawingSnapshot(); }}>⤵️⤵️</button>
+</div>
 
       {/* Actions */}
       <div style={{ display: "flex", gap: 8 }}>

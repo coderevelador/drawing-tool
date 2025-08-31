@@ -18,6 +18,7 @@ export class CanvasEngine {
 
     this.setupCanvas();
     this.bindEvents();
+    this.attachZOrderHotkeys();
   }
 
   getContext() {
@@ -289,6 +290,23 @@ export class CanvasEngine {
     this.store.getState().setCallouts([]);
     this.drawingSnapshot = null;
   }
+
+  attachZOrderHotkeys() {
+  this._zKeyHandler = (e) => {
+    const S = this.store.getState();
+    const ctrl = e.ctrlKey || e.metaKey;
+    // Ctrl/Cmd + ] => forward, Ctrl/Cmd + [ => backward
+    if (ctrl && e.key === "]") { S.bringForward();  this.renderAllObjects(); this.saveDrawingSnapshot(); }
+    if (ctrl && e.key === "[") { S.sendBackward();  this.renderAllObjects(); this.saveDrawingSnapshot(); }
+    // Ctrl/Cmd + Shift + ] => front, Ctrl/Cmd + Shift + [ => back
+    if (ctrl && e.shiftKey && e.key === "]") { S.bringToFront(); this.renderAllObjects(); this.saveDrawingSnapshot(); }
+    if (ctrl && e.shiftKey && e.key === "[") { S.sendToBack();   this.renderAllObjects(); this.saveDrawingSnapshot(); }
+  };
+  window.addEventListener("keydown", this._zKeyHandler);
+}
+
+
+
 
   exportCanvas() {
     return this.canvas.toDataURL("image/png");
