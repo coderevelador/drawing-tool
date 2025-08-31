@@ -77,6 +77,23 @@ export const useCanvasStore = create((set, get) => ({
       },
     },
   },
+  grid: {
+    show: false, // grid visible
+    snap: false, // snap-to-grid
+    size: 16, // grid spacing (px)
+    thickEvery: 5, // bold line every N cells
+    color: "#e0e0e0", // thin line color
+    boldColor: "#c0c0c0", // bold line color
+    alpha: 0.6, // grid opacity
+  },
+
+  toggleGrid: () => set((s) => ({ grid: { ...s.grid, show: !s.grid.show } })),
+  toggleSnapToGrid: () =>
+    set((s) => ({ grid: { ...s.grid, snap: !s.grid.snap } })),
+  setGridSize: (n) =>
+    set((s) => ({
+      grid: { ...s.grid, size: Math.max(2, Number(n) || s.grid.size) },
+    })),
 
   setToolDefaults: (tool, patch) =>
     set((state) => {

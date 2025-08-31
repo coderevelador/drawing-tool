@@ -29,6 +29,73 @@ function applyCommon(ctx, style = {}) {
   return () => ctx.restore();
 }
 
+function fillStyleForObject(ctx, style, object) {
+  if (!style) return style;
+  const mode = style.fillMode || "solid";
+  if (object.type !== "circle") return style.fill || "transparent"; // keep other shapes solid for now
+  const d = object.data || {};
+  const cx = typeof d.r === "number" ? d.x : d.x + d.width / 2;
+  const cy = typeof d.r === "number" ? d.y : d.y + d.height / 2;
+  const r = typeof d.r === "number" ? d.r : Math.max(d.width, d.height) / 2;
+
+  if (mode === "gradient") {
+    const start = style.gradientStart || style.fill || "#fff";
+    const end = style.gradientEnd || "#000";
+    if ((style.gradientType || "radial") === "radial") {
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0, start);
+      g.addColorStop(1, end);
+      return g;
+    } else {
+      const ang = (Number(style.gradientAngle || 0) * Math.PI) / 180;
+      const dx = Math.cos(ang) * r,
+        dy = Math.sin(ang) * r;
+      const g = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+      g.addColorStop(0, start);
+      g.addColorStop(1, end);
+      return g;
+    }
+  }
+  if (mode === "pattern") {
+    const size = Math.max(2, Number(style.patternSize ?? 8));
+    const tile = document.createElement("canvas");
+    tile.width = tile.height = size;
+    const tctx = tile.getContext("2d");
+    if (style.patternBg && style.patternBg !== "transparent") {
+      tctx.fillStyle = style.patternBg;
+      tctx.fillRect(0, 0, size, size);
+    } else {
+      tctx.clearRect(0, 0, size, size);
+    }
+    tctx.fillStyle = style.patternColor || "#000";
+    tctx.strokeStyle = style.patternColor || "#000";
+    if ((style.patternType || "dots") === "dots") {
+      const rr = Math.max(1, Math.floor(size / 6));
+      tctx.beginPath();
+      tctx.arc(size / 2, size / 2, rr, 0, Math.PI * 2);
+      tctx.fill();
+    } else {
+      tctx.lineWidth = Math.max(1, Math.floor(size / 4));
+      tctx.beginPath();
+      tctx.moveTo(0, size / 2);
+      tctx.lineTo(size, size / 2);
+      tctx.stroke();
+    }
+    const pattern = ctx.createPattern(tile, "repeat");
+    const ang = (Number(style.patternAngle || 0) * Math.PI) / 180;
+    if (pattern && pattern.setTransform && ang) {
+      const m = new DOMMatrix();
+      m.a = Math.cos(ang);
+      m.b = Math.sin(ang);
+      m.c = -Math.sin(ang);
+      m.d = Math.cos(ang);
+      pattern.setTransform(m);
+    }
+    return pattern;
+  }
+  return style.fill || "transparent";
+}
+
 function wrapLines(ctx, text, maxWidth, fontSize) {
   const out = [];
   const lh = Math.round((fontSize ?? 14) * 1.25);
@@ -216,6 +283,83 @@ export function strokeCloudAroundPath(ctx, points, radius = 8, opts = {}) {
   ctx.restore();
 }
 
+function rectFillFor(ctx, style, d) {
+  const w0 = d.width ?? 0,
+    h0 = d.height ?? 0;
+  const w = Math.abs(w0),
+    h = Math.abs(h0);
+  const x = w0 >= 0 ? d.x ?? 0 : (d.x ?? 0) - w;
+  const y = h0 >= 0 ? d.y ?? 0 : (d.y ?? 0) - h;
+  const cx = x + w / 2,
+    cy = y + h / 2;
+
+  const mode = style?.fillMode || "solid";
+  if (mode === "gradient") {
+    const start = style.gradientStart || style.fill || "#fff";
+    const end = style.gradientEnd || "#000";
+    if ((style.gradientType || "linear") === "radial") {
+      const R = 0.5 * Math.hypot(w, h);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+      g.addColorStop(0, start);
+      g.addColorStop(1, end);
+      return g;
+    } else {
+      const ang = (Number(style.gradientAngle || 0) * Math.PI) / 180;
+      const L = 0.5 * Math.hypot(w, h);
+      const dx = Math.cos(ang) * L,
+        dy = Math.sin(ang) * L;
+      const g = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+      g.addColorStop(0, start);
+      g.addColorStop(1, end);
+      return g;
+    }
+  }
+
+  if (mode === "pattern") {
+    const size = Math.max(2, Number(style.patternSize ?? 8));
+    const tile = document.createElement("canvas");
+    tile.width = tile.height = size;
+    const tctx = tile.getContext("2d");
+
+    if (style.patternBg && style.patternBg !== "transparent") {
+      tctx.fillStyle = style.patternBg;
+      tctx.fillRect(0, 0, size, size);
+    } else {
+      tctx.clearRect(0, 0, size, size);
+    }
+
+    tctx.fillStyle = style.patternColor || "#000";
+    tctx.strokeStyle = style.patternColor || "#000";
+
+    if ((style.patternType || "dots") === "dots") {
+      const rr = Math.max(1, Math.floor(size / 6));
+      tctx.beginPath();
+      tctx.arc(size / 2, size / 2, rr, 0, Math.PI * 2);
+      tctx.fill();
+    } else {
+      tctx.lineWidth = Math.max(1, Math.floor(size / 4));
+      tctx.beginPath();
+      tctx.moveTo(0, size / 2);
+      tctx.lineTo(size, size / 2);
+      tctx.stroke();
+    }
+
+    const p = ctx.createPattern(tile, "repeat");
+    const ang = (Number(style.patternAngle || 0) * Math.PI) / 180;
+    if (p && p.setTransform && ang) {
+      const m = new DOMMatrix();
+      m.a = Math.cos(ang);
+      m.b = Math.sin(ang);
+      m.c = -Math.sin(ang);
+      m.d = Math.cos(ang);
+      p.setTransform(m);
+    }
+    return p;
+  }
+
+  return style?.fill || "transparent";
+}
+
 // ---------- main ----------
 
 export function renderObject(ctx, object) {
@@ -248,6 +392,7 @@ export function renderObject(ctx, object) {
       } else {
         ctx.beginPath();
         ctx.rect(x, y, width, height);
+        ctx.fillStyle = rectFillFor(ctx, style, d);
         fillIfNeeded(ctx, style);
         ctx.stroke();
       }
@@ -262,6 +407,7 @@ export function renderObject(ctx, object) {
         const { x = 0, y = 0, r = 0 } = d;
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = fillStyleForObject(ctx, style, object);
         fillIfNeeded(ctx, style);
         ctx.stroke();
       } else {
@@ -275,6 +421,7 @@ export function renderObject(ctx, object) {
           cy = y + ry;
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fillStyle = fillStyleForObject(ctx, style, object);
         fillIfNeeded(ctx, style);
         ctx.stroke();
       }

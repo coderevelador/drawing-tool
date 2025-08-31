@@ -52,14 +52,13 @@ export class CanvasEngine {
   }
 
   handleMouseDown(e) {
-    const pos = this.getMousePos(e);
+    let pos = this.getMousePos(e);
+    // keep callout clicks raw (no snap)
+    if (this.handleCalloutClick(pos.x, pos.y)) return;
+
+    // now snap for drawing tools
+    pos = this.snapPoint(pos);
     const { currentTool } = this.store.getState();
-
-    // Check callout clicks first
-    if (this.handleCalloutClick(pos.x, pos.y)) {
-      return;
-    }
-
     const tool = toolRegistry[currentTool];
     if (tool) {
       this.store.getState().setIsDrawing(true);
@@ -70,29 +69,23 @@ export class CanvasEngine {
   handleMouseMove(e) {
     const { isDrawing, currentTool } = this.store.getState();
     if (!isDrawing) return;
-
-    const pos = this.getMousePos(e);
+    let pos = this.getMousePos(e);
+    pos = this.snapPoint(pos);
     const tool = toolRegistry[currentTool];
-    if (tool) {
-      tool.onMouseMove(e, pos, this);
-    }
+    if (tool) tool.onMouseMove(e, pos, this);
   }
 
   handleMouseUp(e) {
     const { isDrawing, currentTool } = this.store.getState();
     if (!isDrawing) return;
-
-    const pos = this.getMousePos(e);
+    let pos = this.getMousePos(e);
+    pos = this.snapPoint(pos);
     const tool = toolRegistry[currentTool];
-    if (tool) {
-      tool.onMouseUp(e, pos, this);
-    }
-
+    if (tool) tool.onMouseUp(e, pos, this);
     this.store.getState().setIsDrawing(false);
     this.renderAllObjects();
     this.saveDrawingSnapshot();
   }
-
   handleCalloutClick(x, y) {
     const { callouts, setEditingCallout, setCalloutText } =
       this.store.getState();
@@ -142,17 +135,12 @@ export class CanvasEngine {
 
   redrawCanvas() {
     const { objects, pdfImage } = this.store.getState();
-
     this.ctx.clearRect(0, 0, this.width, this.height);
-
-    if (pdfImage) {
-      this.ctx.drawImage(pdfImage, 0, 0);
-    }
-
+    if (pdfImage) this.ctx.drawImage(pdfImage, 0, 0);
+    this.drawGrid(); // <-- add
     objects
       .sort((a, b) => a.layer - b.layer)
-      .forEach((obj) => renderObject(this.ctx, obj));
-
+      .forEach((o) => renderObject(this.ctx, o));
     this.redrawCallouts();
   }
 
@@ -233,6 +221,68 @@ export class CanvasEngine {
     this.store.getState().setCallouts([]);
   }
 
+  snapPoint(p) {
+    const { grid } = this.store.getState();
+    if (!grid?.snap) return p;
+    const s = Math.max(1, grid.size || 16);
+    return { x: Math.round(p.x / s) * s, y: Math.round(p.y / s) * s };
+  }
+
+  // Draw grid behind everything
+  drawGrid() {
+    const { grid } = this.store.getState();
+    if (!grid?.show) return;
+
+    const {
+      size = 16,
+      thickEvery = 5,
+      color = "#e0e0e0",
+      boldColor = "#c0c0c0",
+      alpha = 0.6,
+    } = grid;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // vertical lines
+    for (let x = 0; x <= this.width; x += size) {
+      const isBold = Math.round(x / size) % thickEvery === 0;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(x) + 0.5, 0);
+      ctx.lineTo(Math.round(x) + 0.5, this.height);
+      ctx.strokeStyle = isBold ? boldColor : color;
+      ctx.lineWidth = isBold ? 1.25 : 1;
+      ctx.stroke();
+    }
+    // horizontal lines
+    for (let y = 0; y <= this.height; y += size) {
+      const isBold = Math.round(y / size) % thickEvery === 0;
+      ctx.beginPath();
+      ctx.moveTo(0, Math.round(y) + 0.5);
+      ctx.lineTo(this.width, Math.round(y) + 0.5);
+      ctx.strokeStyle = isBold ? boldColor : color;
+      ctx.lineWidth = isBold ? 1.25 : 1;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // (Optional but handy) keyboard toggles
+  attachGridHotkeys() {
+    this._gridKeyHandler = (e) => {
+      const k = (e.key || "").toLowerCase();
+      const s = this.store.getState();
+      if (k === "g") {
+        s.toggleGrid();
+        this.renderAllObjects();
+      }
+      if (k === "s") {
+        s.toggleSnapToGrid();
+      }
+    };
+    window.addEventListener("keydown", this._gridKeyHandler);
+  }
+
   clearAll() {
     this.store.getState().clearObjects();
     this.ctx.clearRect(0, 0, this.width, this.height);
@@ -247,21 +297,17 @@ export class CanvasEngine {
   renderAllObjects() {
     const { objects } = this.store.getState();
     this.ctx.clearRect(0, 0, this.width, this.height);
-
-    const ordered = [...objects].sort((a, b) => {
-      const la = Number.isFinite(a.layer) ? a.layer : 0;
-      const lb = Number.isFinite(b.layer) ? b.layer : 0;
-      return la - lb;
-    });
-
-    const base = [];
-    const blurs = [];
+    this.drawGrid(); // <-- add
+    const ordered = [...objects].sort(
+      (a, b) =>
+        (Number.isFinite(a.layer) ? a.layer : 0) -
+        (Number.isFinite(b.layer) ? b.layer : 0)
+    );
+    const base = [],
+      blurs = [];
     for (const o of ordered) (o.type === "blur" ? blurs : base).push(o);
-
     base.forEach((o) => renderObject(this.ctx, o));
-    blurs.forEach((o) => renderObject(this.ctx, o)); // <— always on top
-
+    blurs.forEach((o) => renderObject(this.ctx, o));
     this.redrawCallouts();
   }
-  
 }

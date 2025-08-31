@@ -13,6 +13,7 @@ import { StickyNoteTool } from "./StickyNoteTool";
 import { SchemaRegistry } from "../utils/schemaRegistry";
 import { CalloutArrowTool } from "./CalloutArrowTool";
 import { BlurTool } from "./BlurTool";
+import { GridTool } from "./GridTool";
 
 export const toolRegistry = {
   pencil: new PencilTool(),
@@ -29,6 +30,7 @@ export const toolRegistry = {
   stickynote: new StickyNoteTool(),
   calloutArrow: new CalloutArrowTool(),
   blur: new BlurTool(),
+  grid: new GridTool(),
 };
 
 SchemaRegistry.registerFromTools(toolRegistry);
@@ -48,4 +50,5 @@ export const toolList = [
   { name: "stickynote", icon: "🗒️", label: "Sticky" },
   { name: "calloutArrow", icon: "🗨️", label: "Callout Arrow" },
   { name: "blur", icon: "🫧", label: "Blur" },
+  { name: "grid", icon: "🔳", label: "Grid / Snap" },
 ];
