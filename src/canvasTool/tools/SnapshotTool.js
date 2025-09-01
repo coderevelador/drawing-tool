@@ -1,3 +1,4 @@
+// src/canvasTool/tools/SnapshotTool.js
 import { BaseTool } from "./BaseTool";
 import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
@@ -13,7 +14,7 @@ export class SnapshotTool extends BaseTool {
     this.minSize = 2;
 
     // UI
-    this.borderWidth = 1.0;
+    this.borderWidth = 1;
     this.toastMs = 1100;
     this.fallbackToolName = "pencil";
     this.prevToolName = null;
@@ -30,14 +31,11 @@ export class SnapshotTool extends BaseTool {
     const canvas = engine.canvas || engine.ctx?.canvas;
     const W = canvas?.width ?? engine.width ?? 0;
     const H = canvas?.height ?? engine.height ?? 0;
-
     let x = Math.max(0, Math.min(rect.x, W));
     let y = Math.max(0, Math.min(rect.y, H));
     let w = Math.max(0, Math.min(rect.w, W - x));
     let h = Math.max(0, Math.min(rect.h, H - y));
-
-    x = Math.floor(x); y = Math.floor(y); w = Math.floor(w); h = Math.floor(h);
-    return { x, y, w, h };
+    return { x: x|0, y: y|0, w: w|0, h: h|0 };
   }
 
   _clearCanvas(engine) {
@@ -50,21 +48,22 @@ export class SnapshotTool extends BaseTool {
   _drawMarquee(engine) {
     if (!this.drawing || !this.start || !this.curr) return;
 
-    // Ensure any previous overlay is removed even if the engine doesn't clear.
+    // 1) Clear overlay and redraw baseline scene
     this._clearCanvas(engine);
-    // Baseline: render current scene
     engine.renderAllObjects();
 
-    // Overlay
+    // 2) Draw semi-transparent marquee on top
     const ctx = engine.ctx;
     const rect = this._normRect(this.start, this.curr);
 
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.08)";
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.strokeStyle = "#000000";
+
+    ctx.strokeStyle = "#000";
     ctx.lineWidth = this.borderWidth;
-    if (ctx.setLineDash) ctx.setLineDash([6,4]);
+    ctx.setLineDash?.([6, 4]);
+    // 0.5 pixel align for crisp dashed border
     ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, Math.max(0, rect.w - 1), Math.max(0, rect.h - 1));
     ctx.restore();
   }
@@ -100,11 +99,11 @@ export class SnapshotTool extends BaseTool {
     const W = canvas?.width ?? engine.width ?? 0;
     const H = canvas?.height ?? engine.height ?? 0;
 
-    // Clean slate (so the marquee disappears), then baseline scene
+    // Ensure clean baseline (no marquee)
     this._clearCanvas(engine);
     engine.renderAllObjects();
 
-    // position toast
+    // Position toast near selection if possible
     let cx = W / 2, cy = H - 28;
     if (rect) {
       cx = rect.x + Math.min(rect.w, 240) / 2;
@@ -121,7 +120,7 @@ export class SnapshotTool extends BaseTool {
     const x = Math.max(8, Math.min(cx - boxW / 2, W - boxW - 8));
     const y = Math.max(8, Math.min(cy - boxH / 2, H - boxH - 8));
 
-    // background (rounded)
+    // bg
     ctx.fillStyle = "rgba(0,0,0,0.65)";
     const r = 8;
     ctx.beginPath();
@@ -134,12 +133,12 @@ export class SnapshotTool extends BaseTool {
     ctx.fill();
 
     // text
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = "#fff";
     ctx.textBaseline = "middle";
     ctx.fillText(text, x + padX, y + boxH / 2);
     ctx.restore();
 
-    // remove toast after timeout (and any overlay remnants)
+    // auto clear toast after timeout
     setTimeout(() => {
       this._clearCanvas(engine);
       engine.renderAllObjects();
@@ -147,11 +146,8 @@ export class SnapshotTool extends BaseTool {
   }
 
   _switchAway(engine) {
-    const storeRef = (engine?.store && typeof engine.store.getState === "function")
-      ? engine.store
-      : useCanvasStore;
-
-    const state = storeRef.getState ? storeRef.getState() : {};
+    const storeRef = engine?.store?.getState ? engine.store : useCanvasStore;
+    const s = storeRef.getState ? storeRef.getState() : {};
     const target =
       (this.prevToolName && this.prevToolName !== this.name)
         ? this.prevToolName
@@ -159,33 +155,45 @@ export class SnapshotTool extends BaseTool {
 
     if (typeof storeRef.setActiveTool === "function") { try { storeRef.setActiveTool(target); return; } catch {} }
     if (typeof engine?.setActiveTool === "function") { try { engine.setActiveTool(target); return; } catch {} }
-    if (typeof storeRef.setState === "function" && ("activeTool" in state)) {
+    if (typeof storeRef.setState === "function" && ("activeTool" in s)) {
       try { storeRef.setState({ activeTool: target }); return; } catch {}
     }
   }
 
+  _reset(engine) {
+    this.drawing = false;
+    this.start = null;
+    this.curr  = null;
+    // Ensure any dashed state is not “stuck”
+    engine.ctx.setLineDash?.([]);
+  }
+
+  // ---------- COMMIT ----------
   _commit = async (engine) => {
     if (!this.start || !this.curr) { this._reset(engine); return; }
 
-    const rawRect = this._normRect(this.start, this.curr);
-    const rect = this._clampRectToCanvas(rawRect, engine);
+    // Normalize + clamp
+    const rect = this._clampRectToCanvas(this._normRect(this.start, this.curr), engine);
     if (rect.w < this.minSize || rect.h < this.minSize) {
       this._reset(engine);
-      // ensure any marquee is gone
       this._clearCanvas(engine);
       engine.renderAllObjects();
       return;
     }
 
-    // capture pixels
+    // IMPORTANT: remove marquee before capture so it doesn't appear in the image
+    this._clearCanvas(engine);
+    engine.renderAllObjects();
+
+    // Capture pixels (clean scene)
     const imgData = engine.ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
 
-    // copy to clipboard (await so toast text is accurate)
+    // Try to copy
     const copied = await this._copyToClipboard(engine, rect);
 
-    // add as object
+    // Add snapshot object
     const store = useCanvasStore.getState();
-    const maxLayer = store.objects.length ? Math.max(...store.objects.map(o => o.layer)) : 0;
+    const maxLayer = store.objects.length ? Math.max(...store.objects.map(o => o.layer || 0)) : 0;
     store.addObject(new CanvasObject({
       type: "snapshot",
       data: { x: rect.x, y: rect.y, width: rect.w, height: rect.h, imageData: imgData },
@@ -193,28 +201,20 @@ export class SnapshotTool extends BaseTool {
       layer: maxLayer + 1,
     }));
 
-    // reset state
+    // Reset tool state (and dashed caps)
     this._reset(engine);
 
-    // toast (also clears marquee) + auto switch tool
+    // Toast + switch back to previous/default tool
     const msg = copied ? "Snapshot captured & copied" : "Snapshot captured";
     this._flashMessage(engine, msg, rect);
     this._switchAway(engine);
   };
 
-  _reset(engine) {
-    this.drawing = false;
-    this.start = null;
-    this.curr  = null;
-  }
-
   // ---------- events ----------
   onMouseDown(event, pos, engine) {
-    // remember previous tool to restore later
+    // remember previous tool so we can restore after capture
     try {
-      const storeRef = (engine?.store && typeof engine.store.getState === "function")
-        ? engine.store
-        : useCanvasStore;
+      const storeRef = engine?.store?.getState ? engine.store : useCanvasStore;
       const s = storeRef.getState ? storeRef.getState() : {};
       this.prevToolName = s.activeTool || s.currentTool || engine?.activeTool || null;
     } catch { this.prevToolName = null; }
@@ -262,3 +262,5 @@ export class SnapshotTool extends BaseTool {
     }
   }
 }
+
+export default SnapshotTool;

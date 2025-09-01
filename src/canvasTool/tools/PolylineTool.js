@@ -1,281 +1,355 @@
+// src/canvasTool/tools/PolylineTool.js
 import { BaseTool } from "./BaseTool";
 import { CanvasObject } from "../models/CanvasObject";
 import { useCanvasStore } from "../state/canvasStore";
 
 export class PolylineTool extends BaseTool {
+  static defaultsPanel = {
+    fields: [
+      {
+        group: "Stroke",
+        label: "Color",
+        type: "color",
+        path: "style.stroke",
+        default: "#222222",
+      },
+      {
+        group: "Stroke",
+        label: "Width",
+        type: "number",
+        path: "style.lineWidth",
+        default: 2,
+        min: 0,
+        step: 0.5,
+      },
+      {
+        group: "Stroke",
+        label: "Opacity",
+        type: "range",
+        path: "style.opacity",
+        default: 1,
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+      {
+        group: "Stroke",
+        label: "Line Type",
+        type: "select",
+        path: "style.lineType",
+        default: "solid",
+        options: [
+          { label: "Solid", value: "solid" },
+          { label: "Dashed", value: "dashed" },
+          { label: "Dotted", value: "dotted" },
+          { label: "Revision Cloud", value: "cloud" },
+        ],
+      },
+
+      // Optional close/fill
+      {
+        group: "Shape",
+        label: "Closed",
+        type: "checkbox",
+        path: "closed",
+        default: false,
+      },
+      {
+        group: "Fill",
+        label: "Enabled",
+        type: "checkbox",
+        path: "style.fillEnabled",
+        default: false,
+      },
+      {
+        group: "Fill",
+        label: "Color",
+        type: "color",
+        path: "style.fill",
+        default: "#ffffff",
+      },
+      {
+        group: "Fill",
+        label: "Opacity",
+        type: "range",
+        path: "style.fillOpacity",
+        default: 1,
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+
+      // Cloud params
+      {
+        group: "Cloud",
+        label: "Amplitude",
+        type: "number",
+        path: "style.cloudAmplitude",
+        default: 8,
+        min: 2,
+        max: 64,
+        step: 1,
+      },
+      {
+        group: "Cloud",
+        label: "Step",
+        type: "number",
+        path: "style.cloudStep",
+        default: 12,
+        min: 2,
+        max: 64,
+        step: 1,
+      },
+    ],
+  };
+
   constructor() {
     super();
-    this.name = "polyline";
+    this.name = "polyline"; // MUST match toolDefaults key
 
-    // drawing state
-    this.points = [];
-    this.drawing = false;
-    this.lastClickTime = 0;
-    this.finishDblClickMs = 300;
-    this.closeHitRadius = 8;
+    this._points = [];
+    this._drawing = false;
+    this._styleSnapshot = null;
+    this._snapshot = null;
 
-    // offscreen buffer for confirmed segments (no flicker)
-    this.buffer = null;
-    this.bctx = null;
+    this._closedOnFinish = false;
 
-    // lock the tool's color/width when drawing starts (matches other tools)
-    this.lockedStroke = null;
-    this.lockedWidth = null;
-
-    // visual hint when cursor is near the starting point (close polygon)
-    this.aboutToClose = false;
+    // dbl-click detection
+    this._lastClickAt = 0;
+    this._lastClickPos = null;
+    this._dblMs = 280;
+    this._dblDist2 = 100;
   }
 
-  // ----------------- helpers -----------------
-  _dist(a, b) {
-    const dx = a.x - b.x, dy = a.y - b.y;
-    return Math.sqrt(dx * dx + dy * dy);
+  // ---------- helpers ----------
+  _applyStroke(ctx, s) {
+    ctx.globalAlpha = typeof s.opacity === "number" ? s.opacity : 1;
+    ctx.strokeStyle = s.stroke ?? "#000";
+    ctx.lineWidth = s.lineWidth ?? 2;
+    ctx.lineJoin = s.lineJoin || "round";
+    ctx.lineCap = s.lineCap || "round";
+    ctx.miterLimit = s.miterLimit ?? 10;
+    if (s.composite) ctx.globalCompositeOperation = s.composite;
   }
 
-  _applyStroke(ctx) {
-    ctx.strokeStyle = this.lockedStroke ?? "#000000";
-    ctx.lineWidth   = this.lockedWidth  ?? 2;
-    ctx.lineJoin = "round";
-    ctx.lineCap  = "round";
-  }
-
-  _ensureBuffer(engine) {
-    if (!this.buffer) {
-      const c = document.createElement("canvas");
-      // support engines that expose either canvas or width/height
-      const w = (engine && engine.canvas && engine.canvas.width)  ? engine.canvas.width  : (engine.width  || 0);
-      const h = (engine && engine.canvas && engine.canvas.height) ? engine.canvas.height : (engine.height || 0);
-      c.width = w;
-      c.height = h;
-      this.buffer = c;
-      this.bctx = c.getContext("2d");
+  _applyDash(ctx, s) {
+    const lt = s.lineType || "solid";
+    if (lt === "dashed") {
+      const dash = Math.max(1, Math.floor(s.dashSize ?? s.lineWidth * 3));
+      const gap = Math.max(1, Math.floor(s.dashGap ?? s.lineWidth * 2));
+      ctx.setLineDash([dash, gap]);
+      if (!s.lineCap) ctx.lineCap = "butt";
+    } else if (lt === "dotted") {
+      const dot = Math.max(1, Math.floor(s.dotSize ?? 1));
+      const gap = Math.max(1, Math.floor(s.dotGap ?? s.lineWidth * 1.5));
+      ctx.setLineDash([dot, gap]);
+      ctx.lineCap = "round";
+    } else {
+      ctx.setLineDash([]);
     }
   }
 
-  _clearBuffer() {
-    if (this.bctx && this.buffer) {
-      this.bctx.clearRect(0, 0, this.buffer.width, this.buffer.height);
-    }
+  _isDoubleClick(now, pos) {
+    if (!this._lastClickAt || !this._lastClickPos) return false;
+    const dt = now - this._lastClickAt;
+    const dx = pos.x - this._lastClickPos.x;
+    const dy = pos.y - this._lastClickPos.y;
+    return dt <= this._dblMs && dx * dx + dy * dy <= this._dblDist2;
   }
 
-  _drawHandleDots(ctx) {
+  _beginStroke(engine, pos) {
+    this._drawing = true;
+    this._points = [{ x: pos.x, y: pos.y }];
+
+    // Freeze dock toggle "Closed path" for this stroke
+    const s = engine.store.getState();
+    const defaults = (s.toolDefaults && s.toolDefaults[this.name]) || {};
+    this._closedOnFinish = !!defaults.closed;
+
+    // Freeze style
+    const { style } = this.getToolOptions(engine.store);
+    this._styleSnapshot = {
+      stroke: style.stroke ?? "#000",
+      lineWidth: style.lineWidth ?? 2,
+      opacity: typeof style.opacity === "number" ? style.opacity : 1,
+      lineType: style.lineType || "solid",
+      lineJoin: style.lineJoin || "round",
+      lineCap: style.lineCap || "round",
+      miterLimit: style.miterLimit ?? 10,
+      composite: style.composite,
+      dashSize: style.dashSize,
+      dashGap: style.dashGap,
+      dotSize: style.dotSize,
+      dotGap: style.dotGap,
+      // (renderer uses these only if closed)
+      fill: style.fill,
+      fillEnabled: style.fillEnabled,
+      fillOpacity: style.fillOpacity,
+      cloudAmplitude: style.cloudAmplitude,
+      cloudStep: style.cloudStep,
+      cloudOverlap: style.cloudOverlap,
+      cloudSweepDeg: style.cloudSweepDeg,
+    };
+
+    // Baseline = current canvas
+    this._snapshot = engine.ctx.getImageData(0, 0, engine.width, engine.height);
+
+    // --- draw the FIRST vertex dot immediately and resnapshot so it persists ---
+    const ctx = engine.ctx;
+    ctx.putImageData(this._snapshot, 0, 0);
+
+    // Use solid caps when drawing dots
     ctx.save();
-    ctx.fillStyle = "#00000080";
-    for (const p of this.points) {
+    ctx.setLineDash([]);
+    ctx.fillStyle = this._styleSnapshot.stroke ?? "#000";
+    const r = Math.max(2, Math.min(3, this._styleSnapshot.lineWidth ?? 2));
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // now capture baseline that includes the start anchor
+    this._snapshot = ctx.getImageData(0, 0, engine.width, engine.height);
+  }
+
+  _preview(engine, cursorPos) {
+    const ctx = engine.ctx;
+    ctx.putImageData(this._snapshot, 0, 0);
+    if (this._points.length === 0) return;
+
+    const s = { ...this._styleSnapshot };
+    if (s.lineType === "cloud") s.lineType = "solid"; // cloud preview after close only
+
+    this._applyStroke(ctx, s);
+    this._applyDash(ctx, s);
+
+    ctx.beginPath();
+    ctx.moveTo(this._points[0].x, this._points[0].y);
+    for (let i = 1; i < this._points.length; i++)
+      ctx.lineTo(this._points[i].x, this._points[i].y);
+    if (cursorPos) ctx.lineTo(cursorPos.x, cursorPos.y);
+    ctx.stroke();
+
+    // fixed vertex dots
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.fillStyle = s.stroke ?? "#000";
+    const r = Math.max(2, Math.min(3, s.lineWidth ?? 2));
+    for (const p of this._points) {
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (this.points.length >= 2 && this.aboutToClose) {
-      ctx.fillStyle = "#ff000080";
-      ctx.strokeStyle = "#ff0000";
-      ctx.lineWidth = 2;
-      const first = this.points[0];
+    // (optional) live cursor anchor
+    if (cursorPos) {
       ctx.beginPath();
-      ctx.arc(first.x, first.y, 5, 0, Math.PI * 2);
+      ctx.arc(cursorPos.x, cursorPos.y, r, 0, Math.PI * 2);
       ctx.fill();
-      ctx.stroke();
     }
     ctx.restore();
   }
 
-  // Compose: store → buffer (confirmed) → live segment to cursor
-  _compose(engine, pos) {
-    // 1) draw already-committed objects from store
-    engine.renderAllObjects();
+  _finish(engine) {
+    const store = useCanvasStore.getState();
+    const maxLayer = store.objects.length
+      ? Math.max(...store.objects.map((o) => o.layer || 0))
+      : 0;
 
-    // 2) draw confirmed segments from buffer
-    if (this.buffer) engine.ctx.drawImage(this.buffer, 0, 0);
-
-    // 3) draw the current live segment
-    if (this.drawing && this.points.length) {
-      const ctx = engine.ctx;
-      this._applyStroke(ctx);
-
-      const last = this.points[this.points.length - 1];
-      ctx.beginPath();
-      ctx.moveTo(last.x, last.y);
-
-      if (pos) {
-        if (this.points.length >= 2 && this._dist(pos, this.points[0]) <= this.closeHitRadius) {
-          // snap preview to first point to indicate closing
-          ctx.lineTo(this.points[0].x, this.points[0].y);
-          this.aboutToClose = true;
-        } else {
-          ctx.lineTo(pos.x, pos.y);
-          this.aboutToClose = false;
-        }
-      } else {
-        this.aboutToClose = false;
-      }
-
-      ctx.stroke();
-      this._drawHandleDots(ctx);
-    }
-  }
-
-  _commit(engine, asClosed = false) {
-    const pts = this.points.slice();
-    if (pts.length >= 2) {
-      const storeRef = useCanvasStore; // zustand store
-      const state = storeRef.getState();
-      const maxLayer = state.objects.length ? Math.max(...state.objects.map(o => o.layer)) : 0;
-
-      state.addObject(new CanvasObject({
+    store.addObject(
+      new CanvasObject({
         type: "polyline",
-        data: { points: pts, closed: !!asClosed },
-        style: {
-          stroke: this.lockedStroke ?? state.color,
-          lineWidth: this.lockedWidth ?? state.lineWidth
-        },
-        layer: maxLayer + 1
-      }));
+        data: { points: this._points.slice(), closed: !!this._closedOnFinish },
+        style: { ...this._styleSnapshot },
+        layer: maxLayer + 1,
+      })
+    );
+
+    engine.renderAllObjects?.();
+
+    this._drawing = false;
+    this._points = [];
+    this._styleSnapshot = null;
+    this._snapshot = null;
+  }
+
+  // ---------- events ----------
+  onMouseDown(e, pos, engine) {
+    const now = performance.now ? performance.now() : Date.now();
+
+    // double-click finishes (closed/open per dock)
+    if (this._drawing && this._isDoubleClick(now, pos)) {
+      this._finish(engine);
+      this._lastClickAt = 0;
+      this._lastClickPos = null;
+      return;
     }
 
-    // reset local state
-    this.points = [];
-    this.drawing = false;
-    this.lastClickTime = 0;
-    this.lockedStroke = null;
-    this.lockedWidth = null;
-    this.aboutToClose = false;
-    this._clearBuffer();
-    this.buffer = null;
-    this.bctx = null;
+    if (!this._drawing) {
+      this._beginStroke(engine, pos);
+    } else {
+      // ---- draw the new segment + vertex onto canvas, then resnapshot ----
+      const ctx = engine.ctx;
 
-    // final render from store
-    engine.renderAllObjects();
-  }
+      // restore to last baseline
+      ctx.putImageData(this._snapshot, 0, 0);
 
-  _cancel(engine) {
-    this.points = [];
-    this.drawing = false;
-    this.lastClickTime = 0;
-    this.lockedStroke = null;
-    this.lockedWidth = null;
-    this.aboutToClose = false;
-    this._clearBuffer();
-    this.buffer = null;
-    this.bctx = null;
-    engine.renderAllObjects();
-  }
+      const s = { ...this._styleSnapshot };
+      if (s.lineType === "cloud") s.lineType = "solid";
+      this._applyStroke(ctx, s);
+      this._applyDash(ctx, s);
 
-  // --------------- events ----------------
-  onMouseDown(event, pos, engine) {
-    const now = Date.now();
-    const isRightClick = event && event.button === 2;
-    const doubleClick = now - this.lastClickTime < this.finishDblClickMs;
+      ctx.beginPath();
+      ctx.moveTo(this._points[0].x, this._points[0].y);
+      for (let i = 1; i < this._points.length; i++)
+        ctx.lineTo(this._points[i].x, this._points[i].y);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
 
-    if (!this.drawing) {
-      // LOCK STYLE at start using the same path as other tools (BaseTool -> zustand store)
-      const storeRef =
-        (engine && engine.store && typeof engine.store.getState === "function")
-          ? engine.store
-          : useCanvasStore; // fallback to real zustand store
-
-      let opts;
-      try {
-        opts = (typeof super.getToolOptions === "function")
-          ? super.getToolOptions(storeRef)
-          : { color: storeRef.getState().color, lineWidth: storeRef.getState().lineWidth };
-      } catch {
-        const s = storeRef.getState ? storeRef.getState() : {};
-        opts = { color: s.color ?? "#000000", lineWidth: s.lineWidth ?? 2 };
+      // vertex dots (existing + new)
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.fillStyle = s.stroke ?? "#000";
+      const r = Math.max(2, Math.min(3, s.lineWidth ?? 2));
+      for (const p of this._points) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
       }
-      this.lockedStroke = opts.color;
-      this.lockedWidth  = opts.lineWidth;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
 
-      // start polyline
-      this.drawing = true;
-      this.points = [pos];
-
-      // prepare buffer and draw first preview
-      this._ensureBuffer(engine);
-      this._compose(engine, pos);
-      this.lastClickTime = now;
-      return;
+      // commit vertex and freeze baseline including it
+      this._points.push({ x: pos.x, y: pos.y });
+      this._snapshot = ctx.getImageData(0, 0, engine.width, engine.height);
     }
 
-    // while drawing…
-    if (isRightClick) {
-      this._commit(engine, false);
-      this.lastClickTime = now;
-      return;
-    }
-
-    // click near first point => close polygon
-    if (this.points.length >= 2 && this._dist(pos, this.points[0]) <= this.closeHitRadius) {
-      // draw closing segment into buffer so it appears instantly
-      this._ensureBuffer(engine);
-      this._applyStroke(this.bctx);
-      const last = this.points[this.points.length - 1];
-      this.bctx.beginPath();
-      this.bctx.moveTo(last.x, last.y);
-      this.bctx.lineTo(this.points[0].x, this.points[0].y);
-      this.bctx.stroke();
-
-      this._compose(engine, null);
-      this._commit(engine, true);
-      this.lastClickTime = now;
-      return;
-    }
-
-    // double-click => finish open polyline
-    if (doubleClick) {
-      this._compose(engine, null);
-      this._commit(engine, false);
-      this.lastClickTime = now;
-      return;
-    }
-
-    // Extend: draw confirmed segment into buffer so it persists immediately
-    const prev = this.points[this.points.length - 1];
-    this.points.push(pos);
-
-    this._ensureBuffer(engine);
-    this._applyStroke(this.bctx);
-    this.bctx.beginPath();
-    this.bctx.moveTo(prev.x, prev.y);
-    this.bctx.lineTo(pos.x, pos.y);
-    this.bctx.stroke();
-
-    // repaint: store + buffer + live segment
-    this._compose(engine, pos);
-    this.lastClickTime = now;
+    this._lastClickAt = now;
+    this._lastClickPos = { x: pos.x, y: pos.y };
   }
 
-  onMouseMove(event, pos, engine) {
-    if (!this.drawing) return;
-    this._compose(engine, pos);
+  onMouseMove(e, pos, engine) {
+    if (!this._drawing || !this._snapshot) return;
+    this._preview(engine, pos);
   }
 
-  onMouseUp() {
-    // no-op (we build by clicks)
+  onMouseUp(e, pos, engine) {
+    // vertices are committed on mousedown
   }
 
-  onKeyDown(event, engine) {
-    if (!this.drawing || !event) return;
-    if (event.key === "Enter") {
-      this._compose(engine, null);
-      this._commit(engine, false);
-    }
-    if (event.key === "Escape") {
-      this._cancel(engine);
-    }
-  }
-
-  onDeactivate(engine) {
-    // If tool switches mid-draw, finalize gracefully (prevents chaining)
-    if (this.drawing) {
-      this._compose(engine, null);
-      this._commit(engine, false);
-    }
-  }
-
-  onBlur(engine) {
-    if (this.drawing) {
-      this._compose(engine, null);
-      this._commit(engine, false);
+  onKeyDown(e, engine) {
+    if (!this._drawing) return;
+    if (e.key === "Escape") {
+      if (this._snapshot) engine.ctx.putImageData(this._snapshot, 0, 0);
+      this._drawing = false;
+      this._points = [];
+      this._styleSnapshot = null;
+      this._snapshot = null;
+    } else if (e.key === "Enter") {
+      this._finish(engine);
     }
   }
 }
+
+export default PolylineTool;
