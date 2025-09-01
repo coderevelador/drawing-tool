@@ -786,6 +786,8 @@ export function renderObject(ctx, object) {
       const y = Math.floor(d.y || 0);
       const w = Math.floor(d.width || 160);
       const h = Math.floor(d.height || 120);
+      const rotDeg = Number(d.rotationDeg || 0);
+      const rot = (rotDeg * Math.PI) / 180;
 
       const bg = s.fill || "#FFF9B1";
       const color = s.color || "#111111";
@@ -798,41 +800,42 @@ export function renderObject(ctx, object) {
       const pad = Math.max(4, Number(d.padding ?? 10));
       const shadow = !!d.shadow;
 
-      // rounded rect helper
-      const rr = (ctx, x, y, w, h, r) => {
-        const rr2 = Math.min(r, Math.min(w, h) / 2);
+      const rr = (ctx, xx, yy, ww, hh, r) => {
+        const rr2 = Math.min(r, Math.min(ww, hh) / 2);
         ctx.beginPath();
-        ctx.moveTo(x + rr2, y);
-        ctx.arcTo(x + w, y, x + w, y + h, rr2);
-        ctx.arcTo(x + w, y + h, x, y + h, rr2);
-        ctx.arcTo(x, y + h, x, y, rr2);
-        ctx.arcTo(x, y, x + w, y, rr2);
+        ctx.moveTo(xx + rr2, yy);
+        ctx.arcTo(xx + ww, yy, xx + ww, yy + hh, rr2);
+        ctx.arcTo(xx + ww, yy + hh, xx, yy + hh, rr2);
+        ctx.arcTo(xx, yy + hh, xx, yy, rr2);
+        ctx.arcTo(xx, yy, xx + ww, yy, rr2);
         ctx.closePath();
       };
 
       ctx.save();
       ctx.globalAlpha = opacity;
 
-      // shadow
+      // rotate about the center
+      const cx = x + w / 2,
+        cy = y + h / 2;
+      ctx.translate(cx, cy);
+      if (rot) ctx.rotate(rot);
+
       if (shadow) {
-        ctx.shadowColor = "rgba(0,0,0,0.18)";
-        ctx.shadowBlur = 16;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 6;
+        ctx.shadowColor = "rgba(0,0,0,0.2)";
+        ctx.shadowBlur = 8;
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 3;
       }
 
-      // background
       ctx.fillStyle = bg;
-      rr(ctx, x, y, w, h, radius);
+      rr(ctx, -w / 2, -h / 2, w, h, radius);
       ctx.fill();
 
-      // reset shadow for text
       if (shadow) {
         ctx.shadowColor = "transparent";
         ctx.shadowBlur = 0;
       }
 
-      // text
       ctx.fillStyle = color;
       ctx.font = `${fontSize}px ${fontFamily}`;
       ctx.textBaseline = "top";
@@ -862,8 +865,8 @@ export function renderObject(ctx, object) {
 
       let offY = 0;
       for (const ln of lines) {
-        if (offY + lineHeight > maxH) break; // clip
-        ctx.fillText(ln, x + pad, y + pad + offY);
+        if (offY + lineHeight > maxH) break;
+        ctx.fillText(ln, -w / 2 + pad, -h / 2 + pad + offY);
         offY += lineHeight;
       }
 

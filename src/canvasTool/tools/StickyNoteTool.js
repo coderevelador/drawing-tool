@@ -53,6 +53,15 @@ export class StickyNoteTool extends BaseTool {
       max: 1,
       step: 0.05,
     },
+    {
+      group: "Transform",
+      label: "Rotation (deg)",
+      type: "number",
+      path: "data.rotationDeg",
+      min: -180,
+      max: 180,
+      step: 1,
+    },
   ];
 
   constructor() {
@@ -80,6 +89,7 @@ export class StickyNoteTool extends BaseTool {
       radius: 10, // corner radius
       padding: 10, // inner padding for render (editor uses CSS padding)
       shadow: true,
+      rotationDeg: 0,
     };
   }
 
@@ -133,6 +143,9 @@ export class StickyNoteTool extends BaseTool {
       ? "0 6px 22px rgba(0,0,0,0.18)"
       : "none";
     ed.style.textAlign = "left";
+    ed.style.resize = "both";
+    ed.style.overflow = "auto";
+    ed.style.boxSizing = "border-box";
   }
 
   _makePalette(host, editorDiv) {
@@ -245,6 +258,31 @@ export class StickyNoteTool extends BaseTool {
     row2.append(opLabel, op);
     el.appendChild(row2);
 
+    // rotation
+    const rowR = document.createElement("div");
+    rowR.style.display = "flex";
+    rowR.style.gap = "6px";
+    rowR.style.alignItems = "center";
+    const rLabel = document.createElement("span");
+    rLabel.textContent = "Rotation";
+    const rRange = document.createElement("input");
+    rRange.type = "range";
+    rRange.min = "-180";
+    rRange.max = "180";
+    rRange.step = "1";
+    rRange.value = String(this.state.rotationDeg || 0);
+    const rVal = document.createElement("span");
+    rVal.textContent = rRange.value + "°";
+    rRange.oninput = () => {
+      this.state.rotationDeg = parseInt(rRange.value, 10) || 0;
+      rVal.textContent = rRange.value + "°";
+      // live preview on the editor box
+      editorDiv.style.transform = `rotate(${this.state.rotationDeg}deg)`;
+      editorDiv.style.transformOrigin = "center center";
+    };
+    rowR.append(rLabel, rRange, rVal);
+    el.appendChild(rowR);
+
     // font size quick +/- and color
     const row3 = document.createElement("div");
     row3.style.display = "flex";
@@ -324,7 +362,21 @@ export class StickyNoteTool extends BaseTool {
     const finish = (commit = true) => {
       pal.remove();
       this.palette = null;
-      this._finalize(engine, rect, ed, commit);
+      // BEFORE constructing the CanvasObject in _finalize(...)
+      try {
+        const r = ed.getBoundingClientRect();
+        const hostR = host.getBoundingClientRect();
+        rect = {
+          x: Math.round(r.left - hostR.left),
+          y: Math.round(r.top - hostR.top),
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+        };
+      } catch {}
+
+      // In the data you pass to new CanvasObject({ ... })
+      rotationDeg: this.state.rotationDeg,
+        this._finalize(engine, rect, ed, commit);
     };
 
     // keyboard
